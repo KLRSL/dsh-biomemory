@@ -1,0 +1,26 @@
+{
+  "name": "dsh-biomemory",
+  "description": "生物仿生记忆系统（Biomimetic Memory for DeepSeek Harness）：纯文件 Markdown 数据层（透明可读改）+ memory 工具 + 冻结快照自动注入 + 分级审批门（重要 ask/普通 auto）+ 审计日志 + /memory 命令 + 跨会话召回",
+  "version": "0.2.0",
+  "type": "module",
+  "main": "./index.mjs",
+  "exports": {
+    ".": "./index.mjs",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-tools": ">=0.1.0-rc.5",
+    "@deepseek-ai/dsh-session": ">=0.1.0-rc.5"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "license": "MIT"
+}
