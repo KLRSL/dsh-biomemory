@@ -34,5 +34,30 @@
   "scripts": {
     "test": "node --test \"tests/*.test.mjs\""
   },
-  "license": "MIT"
+  "license": "MIT",
+  "files": [
+    "index.mjs",
+    "client.js",
+    "cordis.patch.yml",
+    "README.md",
+    "README.zh-CN.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/KLRSL/dsh-biomemory.git"
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "memory",
+    "plugin",
+    "biomimetic",
+    "markdown",
+    "recall"
+  ],
+  "homepage": "https://github.com/KLRSL/dsh-biomemory#readme",
+  "bugs": {
+    "url": "https://github.com/KLRSL/dsh-biomemory/issues"
+  }
 }
