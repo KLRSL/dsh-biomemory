@@ -21,11 +21,19 @@ window.__ModuleLoader__.load({
 				memoryRoot: "记忆根目录",
 				config: "系统配置",
 				halfLifeDays: "半衰期（天）",
+				halfLifeDaysHelp: "记忆权重每经过这么多天衰减一半（默认 7）",
 				decayThreshold: "归档阈值",
+				decayThresholdHelp: "权重低于此值的记忆自动移入归档区（默认 3）",
 				consolidateThreshold: "巩固阈值",
+				consolidateThresholdHelp: "被引用达到此次数后权重 +1（默认 3）",
 				weightCap: "权重上限",
+				weightCapHelp: "巩固加权的最高权重，防止膨胀（默认 20）",
 				hotTokenLimit: "热区 token 上限",
+				hotTokenLimitHelp: "会话启动注入记忆快照的 token 预算（默认 5000）",
 				maxQueryResults: "查询上限",
+				maxQueryResultsHelp: "一次查询最多返回的条目数（默认 20）",
+				reset: "恢复默认",
+				resetConfirm: "确定恢复全部默认设置？",
 				petEndpoint: "本地通知服务 URL（可选，可为空）",
 				petEndpointHelp: "用于本地通知服务的可选 URL（可为空，默认关闭）",
 				save: "保存配置",
@@ -75,11 +83,19 @@ window.__ModuleLoader__.load({
 				memoryRoot: "Memory root",
 				config: "Configuration",
 				halfLifeDays: "Half-life (days)",
+				halfLifeDaysHelp: "Memory weight halves after this many days (default 7)",
 				decayThreshold: "Decay threshold",
+				decayThresholdHelp: "Entries below this weight are archived (default 3)",
 				consolidateThreshold: "Consolidate threshold",
+				consolidateThresholdHelp: "References reaching this count add +1 weight (default 3)",
 				weightCap: "Weight cap",
+				weightCapHelp: "Max weight after consolidation, prevents runaway growth (default 20)",
 				hotTokenLimit: "Hot token limit",
+				hotTokenLimitHelp: "Token budget for the session snapshot injection (default 5000)",
 				maxQueryResults: "Max query results",
+				maxQueryResultsHelp: "Max entries returned per query (default 20)",
+				reset: "Reset to defaults",
+				resetConfirm: "Reset all settings to defaults?",
 				petEndpoint: "Local notify service URL (optional, may be empty)",
 				petEndpointHelp: "Optional URL for a local notification service (may be empty, off by default)",
 				save: "Save config",
@@ -122,35 +138,37 @@ window.__ModuleLoader__.load({
 			return primary === "zh-cn" || primary.startsWith("zh-hans") ? copy["zh-CN"] : copy.en;
 		}
 		const inject = ["slots"];
+		// 注意：--dsw-alias-* 变量在部分环境未定义，必须全部带 fallback（参照 dshmarket 写法）
 		const styles = `
-.bm-page{display:flex;flex-direction:column;gap:12px;max-width:720px;color:var(--dsw-alias-label-primary);font-size:13px;line-height:1.55}
+.bm-page{display:flex;flex-direction:column;gap:12px;max-width:720px;color:var(--dsw-alias-label-primary,#1f2328);font-size:14px;line-height:1.6}
 .bm-page h3{margin:0;font-size:18px;font-weight:600}
 .bm-page h4{margin:0 0 10px;font-size:14px;font-weight:600}
-.bm-status{padding:10px 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;background:var(--dsw-alias-bg-layer-3)}
-.bm-status.error{color:var(--dsw-alias-label-tertiary)}
-.bm-block{padding:12px;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;background:var(--dsw-alias-bg-layer-3)}
+.bm-status{padding:10px 12px;border:1px solid var(--dsw-alias-border-l2,#d0d7de);border-radius:10px;background:var(--dsw-alias-bg-layer-3,#f6f8fa)}
+.bm-status.error{color:var(--dsw-alias-label-tertiary,#6e7781)}
+.bm-block{padding:12px;border:1px solid var(--dsw-alias-border-l2,#d0d7de);border-radius:12px;background:var(--dsw-alias-bg-layer-3,#fff)}
 .bm-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
-.bm-card{padding:10px 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;background:var(--dsw-alias-bg-layer-2)}
-.bm-card strong{display:block;margin-bottom:2px;font-weight:600;font-size:15px}
-.bm-card span{color:var(--dsw-alias-label-tertiary);font-size:12px}
-.bm-root{margin-top:8px;color:var(--dsw-alias-label-tertiary);font-size:12px;word-break:break-all}
+.bm-card{padding:10px 12px;border:1px solid var(--dsw-alias-border-l2,#d0d7de);border-radius:10px;background:var(--dsw-alias-bg-layer-2,#f6f8fa)}
+.bm-card strong{display:block;margin-bottom:2px;font-weight:600;font-size:16px;color:var(--dsw-alias-label-primary,#1f2328)}
+.bm-card span{color:var(--dsw-alias-label-secondary,#57606a);font-size:13px}
+.bm-root{margin-top:8px;color:var(--dsw-alias-label-tertiary,#6e7781);font-size:13px;word-break:break-all}
 .bm-config{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px}
 .bm-field{display:flex;flex-direction:column;gap:4px;min-width:0}
-.bm-field label{color:var(--dsw-alias-label-tertiary);font-size:12px}
-.bm-field input[type=number],.bm-field input[type=text]{height:28px;padding:0 8px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);font-size:13px;min-width:0}
-.bm-field input:focus{outline:none;border-color:var(--dsw-alias-brand-primary)}
+.bm-field label{color:var(--dsw-alias-label-primary,#1f2328);font-size:13px;font-weight:500}
+.bm-field input[type=number],.bm-field input[type=text]{height:30px;padding:0 8px;border:1px solid var(--dsw-alias-border-l2,#d0d7de);border-radius:8px;background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-primary,#1f2328);font-size:13px;min-width:0}
+.bm-field input:focus{outline:none;border-color:#4176e6}
 .bm-wide{grid-column:1/-1}
 .bm-actions{display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap}
-.bm-btn{padding:6px 14px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);font-size:13px;cursor:pointer}
-.bm-btn:hover{border-color:var(--dsw-alias-brand-primary)}
-.bm-btn.primary{background:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary);color:#fff}
+.bm-btn{padding:6px 14px;border:1px solid var(--dsw-alias-border-l2,#d0d7de);border-radius:8px;background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-primary,#1f2328);font-size:13px;cursor:pointer}
+.bm-btn:hover{border-color:#4176e6}
+.bm-btn.primary{background:#4176e6;border-color:#4176e6;color:#fff}
+.bm-btn.primary:hover{background:#3158c8;border-color:#3158c8}
 .bm-btn:disabled{opacity:.5;cursor:default}
-.bm-note{color:var(--dsw-alias-label-tertiary);font-size:12px}
-.bm-ok{color:#34c759}
-.bm-err{color:#e5484d}
+.bm-note{color:var(--dsw-alias-label-secondary,#57606a);font-size:13px}
+.bm-ok{color:#1a7f37}
+.bm-err{color:#cf222e}
 .bm-list{margin:10px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:4px;max-height:280px;overflow:auto}
-.bm-list li{padding:4px 8px;border-radius:6px;background:var(--dsw-alias-bg-layer-2);font-family:ui-monospace,Consolas,monospace;font-size:12px;word-break:break-all}
-.bm-summary{margin-top:10px;font-weight:600}
+.bm-list li{padding:5px 8px;border-radius:6px;background:var(--dsw-alias-bg-layer-2,#f6f8fa);color:var(--dsw-alias-label-primary,#1f2328);font-family:ui-monospace,Consolas,monospace;font-size:13px;word-break:break-all}
+.bm-summary{margin-top:10px;font-weight:600;color:var(--dsw-alias-label-primary,#1f2328)}
 `;
 		const CONFIG_KEYS = ["halfLifeDays", "decayThreshold", "consolidateThreshold", "weightCap", "hotTokenLimit", "maxQueryResults"];
 		function BiomemorySettingsPage() {
@@ -210,6 +228,28 @@ window.__ModuleLoader__.load({
 					setSaveState({ kind: "error" });
 				});
 			};
+			const resetConfig = () => {
+				if (!window.confirm(t.resetConfirm)) return;
+				setSaveState({ kind: "saving" });
+				fetch("/biomemory/api/config", {
+					method: "POST",
+					credentials: "same-origin",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ reset: true })
+				}).then(async (response) => {
+					if (!response.ok) throw new Error("reset failed");
+					const data = await response.json();
+					if (!data?.ok) throw new Error("reset failed");
+					setPetEndpoint(data.petEndpoint || "");
+					const textForm = {};
+					for (const key of CONFIG_KEYS) textForm[key] = data.config[key] !== void 0 ? String(data.config[key]) : "";
+					setConfigText(textForm);
+					setSaveState({ kind: "ok" });
+					loadStatus();
+				}).catch(() => {
+					setSaveState({ kind: "error" });
+				});
+			};
 			const runDream = (dryRun) => {
 				setDream({ kind: "running", dryRun });
 				fetch("/biomemory/api/dream", {
@@ -229,7 +269,7 @@ window.__ModuleLoader__.load({
 			};
 			const runAudit = () => {
 				setAudit({ kind: "loading" });
-				fetch("/biomemory/api/audit?sinceDays=7&type=DECAY", {
+				fetch("/biomemory/api/audit?sinceDays=30", {
 					credentials: "same-origin"
 				}).then(async (response) => {
 					if (!response.ok) throw new Error("audit failed");
@@ -271,6 +311,14 @@ window.__ModuleLoader__.load({
 					hotTokenLimit: t.hotTokenLimit,
 					maxQueryResults: t.maxQueryResults
 				};
+				const helps = {
+					halfLifeDays: t.halfLifeDaysHelp,
+					decayThreshold: t.decayThresholdHelp,
+					consolidateThreshold: t.consolidateThresholdHelp,
+					weightCap: t.weightCapHelp,
+					hotTokenLimit: t.hotTokenLimitHelp,
+					maxQueryResults: t.maxQueryResultsHelp
+				};
 				return (0, react.createElement)("div", {
 					key,
 					className: "bm-field"
@@ -278,7 +326,7 @@ window.__ModuleLoader__.load({
 					type: "number",
 					value: configText[key] !== void 0 ? configText[key] : "",
 					onChange: (event) => setConfigText({ ...configText, [key]: event.target.value })
-				}));
+				}), (0, react.createElement)("span", { className: "bm-note" }, helps[key]));
 			});
 			const dreamSection = (() => {
 				if (dream === null) return null;
@@ -319,7 +367,11 @@ window.__ModuleLoader__.load({
 				className: "bm-btn primary",
 				disabled: saveState !== null && saveState.kind === "saving",
 				onClick: saveConfig
-			}, t.save), saveNote)), (0, react.createElement)("section", { className: "bm-block" }, (0, react.createElement)("h4", null, t.dream), (0, react.createElement)("div", { className: "bm-actions" }, (0, react.createElement)("button", {
+			}, t.save), (0, react.createElement)("button", {
+				className: "bm-btn",
+				disabled: saveState !== null && saveState.kind === "saving",
+				onClick: resetConfig
+			}, t.reset), saveNote)), (0, react.createElement)("section", { className: "bm-block" }, (0, react.createElement)("h4", null, t.dream), (0, react.createElement)("div", { className: "bm-actions" }, (0, react.createElement)("button", {
 				className: "bm-btn primary",
 				disabled: dream !== null && dream.kind === "running",
 				onClick: () => runDream(false)
@@ -343,7 +395,6 @@ window.__ModuleLoader__.load({
 		}
 		//#endregion
 		exports.BiomemorySettingsPage = BiomemorySettingsPage;
-		exports.default = BiomemorySettingsPage;
 		exports.apply = apply;
 		exports.inject = inject;
 		return module.exports;

@@ -75,6 +75,32 @@ const PATHS = {
   auditJson: path.join(MEMORY_ROOT, 'audit.jsonl'), // v0.3 结构化审计
   archive: path.join(MEMORY_ROOT, 'archive'),
   backups: path.join(MEMORY_ROOT, 'backups'),
+  config: path.join(MEMORY_ROOT, 'biomemory.config.json'), // 持久化配置（设置页写入，透明可改）
+}
+
+// 配置持久化：从 biomemory.config.json 读取（不存在则用默认）
+function loadConfig() {
+  try {
+    const raw = readFile(PATHS.config)
+    if (!raw.trim()) return { ...DEFAULTS }
+    const saved = JSON.parse(raw)
+    const merged = { ...DEFAULTS }
+    for (const k of Object.keys(DEFAULTS)) {
+      const v = saved[k]
+      if (v !== undefined && Number.isFinite(Number(v)) && Number(v) > 0) merged[k] = Number(v)
+    }
+    if (typeof saved.petEndpoint === 'string') merged.petEndpoint = saved.petEndpoint
+    return merged
+  } catch {
+    return { ...DEFAULTS }
+  }
+}
+
+function saveConfig(next) {
+  const out = {}
+  for (const k of Object.keys(DEFAULTS)) out[k] = next[k]
+  out.petEndpoint = next.petEndpoint || null
+  writeFile(PATHS.config, JSON.stringify(out, null, 2))
 }
 
 function ensureDirs() {
@@ -864,8 +890,10 @@ function readBody(req) {
 
 export function apply(ctx, config = {}) {
   ensureDirs()
-  CFG = { ...DEFAULTS, ...(typeof config === 'object' && config ? config : {}) }
-  PET_ENDPOINT = typeof config.petEndpoint === 'string' ? config.petEndpoint : null
+  // 配置优先级：bundle 传入 config > 持久化 biomemory.config.json > 默认值
+  const persisted = loadConfig()
+  CFG = { ...DEFAULTS, ...persisted, ...(typeof config === 'object' && config ? config : {}) }
+  PET_ENDPOINT = typeof CFG.petEndpoint === 'string' ? CFG.petEndpoint : null
   selfHeal()
   dbgLog('=== apply 执行 ===')
 
@@ -888,8 +916,11 @@ export function apply(ctx, config = {}) {
   //          /biomemory/api/config  GET 配置 / POST 更新配置
   //          /biomemory/api/dream   POST 触发记忆代谢 { dryRun }
   //          /biomemory/api/audit   GET 审计查询 ?sinceDays=&type=
-  if (ctx.webServer?.register) {
-    ctx.effect(() => ctx.webServer.register({
+  //    注：不能直接访问 ctx.webServer —— Cordis service 未注入时 Proxy getter 抛
+  //    "cannot get property without inject"（?. 拦不住）。用 ctx.inject 懒注入：
+  //    依赖就绪后自动执行注册，缺失时静默跳过（官方 dsh-client-ui-theme 同款写法）。
+  ctx.inject(['webServer'], (httpCtx) => {
+    httpCtx.effect(() => httpCtx.webServer.register({
     kind: 'prefix',
     path: '/biomemory/api',
     handler: async (req, res) => {
@@ -921,6 +952,14 @@ export function apply(ctx, config = {}) {
           let body = {}
           try { body = JSON.parse(await readBody(req)) } catch { /* ignore */ }
           const allowed = ['halfLifeDays', 'decayThreshold', 'consolidateThreshold', 'weightCap', 'hotTokenLimit', 'maxQueryResults', 'petEndpoint']
+          // reset：恢复默认（删除持久化文件）
+          if (body.reset === true) {
+            try { fs.unlinkSync(PATHS.config) } catch { /* ignore */ }
+            CFG = { ...DEFAULTS }
+            PET_ENDPOINT = typeof CFG.petEndpoint === 'string' ? CFG.petEndpoint : null
+            audit('CONFIG', { changed: 'reset' })
+            return send(200, { ok: true, config: CFG, petEndpoint: PET_ENDPOINT, reset: true })
+          }
           const next = { ...CFG }
           for (const k of allowed) {
             if (body[k] !== undefined) {
@@ -933,6 +972,7 @@ export function apply(ctx, config = {}) {
           }
           CFG = next
           PET_ENDPOINT = typeof CFG.petEndpoint === 'string' ? CFG.petEndpoint : null
+          saveConfig(CFG) // 持久化：重启后保留
           audit('CONFIG', { changed: Object.keys(body).filter((k) => allowed.includes(k)).join(',') })
           return send(200, { ok: true, config: CFG, petEndpoint: PET_ENDPOINT })
         }
@@ -954,7 +994,7 @@ export function apply(ctx, config = {}) {
       }
     },
   }), 'dsh-biomemory: settings web API')
-  }
+  })
 
   // 5. DSH 事件 → 桌宠状态机（默认关闭）
   ctx.on('session/event', (session, rawEvent) => {
