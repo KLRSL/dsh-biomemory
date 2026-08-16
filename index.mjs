@@ -852,6 +852,16 @@ function petEvent(type, meta) {
   } catch { /* ignore */ }
 }
 
+// 读取请求体（Web API 用）
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = []
+    req.on('data', (c) => chunks.push(c))
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')))
+    req.on('error', reject)
+  })
+}
+
 export function apply(ctx, config = {}) {
   ensureDirs()
   CFG = { ...DEFAULTS, ...(typeof config === 'object' && config ? config : {}) }
@@ -873,7 +883,80 @@ export function apply(ctx, config = {}) {
   // 3. /memory 命令（可选服务，commands 缺失自动跳过）
   registerMemoryCommand(ctx)
 
-  // 4. DSH 事件 → 桌宠状态机（默认关闭）
+  // 4. 设置页 Web API（官方契约：ctx.webServer.register，kind=prefix；webServer 缺失时自动跳过）
+  //    端点：/biomemory/api/status  GET 记忆统计+配置
+  //          /biomemory/api/config  GET 配置 / POST 更新配置
+  //          /biomemory/api/dream   POST 触发记忆代谢 { dryRun }
+  //          /biomemory/api/audit   GET 审计查询 ?sinceDays=&type=
+  if (ctx.webServer?.register) {
+    ctx.effect(() => ctx.webServer.register({
+    kind: 'prefix',
+    path: '/biomemory/api',
+    handler: async (req, res) => {
+      // URL 基准仅用于解析路径（无网络请求发生）
+      const url = new URL(req.url ?? '/', 'https://dsh.invalid')
+      const p = url.pathname.replace(/^\/biomemory\/api/, '') || '/'
+      res.setHeader('content-type', 'application/json; charset=utf-8')
+      const send = (code, body) => {
+        res.statusCode = code
+        res.end(JSON.stringify(body))
+      }
+      try {
+        if (req.method === 'GET' && p === '/status') {
+          const all = scanAllFiles()
+          let total = 0, pinned = 0
+          const layers = {}
+          for (const f of all) {
+            layers[f.layer] = f.entries.length
+            total += f.entries.length
+            for (const e of f.entries) if (e.pinned) pinned++
+          }
+          const auditRecs = queryAudit({})
+          return send(200, { ok: true, stats: { total, pinned, layers, memoryRoot: MEMORY_ROOT, auditCount: auditRecs.length }, config: CFG, petEndpoint: PET_ENDPOINT })
+        }
+        if (req.method === 'GET' && p === '/config') {
+          return send(200, { ok: true, config: CFG, petEndpoint: PET_ENDPOINT })
+        }
+        if (req.method === 'POST' && p === '/config') {
+          let body = {}
+          try { body = JSON.parse(await readBody(req)) } catch { /* ignore */ }
+          const allowed = ['halfLifeDays', 'decayThreshold', 'consolidateThreshold', 'weightCap', 'hotTokenLimit', 'maxQueryResults', 'petEndpoint']
+          const next = { ...CFG }
+          for (const k of allowed) {
+            if (body[k] !== undefined) {
+              if (k === 'petEndpoint') next[k] = typeof body[k] === 'string' && body[k] ? body[k] : null
+              else {
+                const v = Number(body[k])
+                if (Number.isFinite(v) && v > 0) next[k] = v
+              }
+            }
+          }
+          CFG = next
+          PET_ENDPOINT = typeof CFG.petEndpoint === 'string' ? CFG.petEndpoint : null
+          audit('CONFIG', { changed: Object.keys(body).filter((k) => allowed.includes(k)).join(',') })
+          return send(200, { ok: true, config: CFG, petEndpoint: PET_ENDPOINT })
+        }
+        if (req.method === 'POST' && p === '/dream') {
+          let body = {}
+          try { body = JSON.parse(await readBody(req)) } catch { /* ignore */ }
+          const r = runDream({ dryRun: body.dryRun === true })
+          return send(200, { ok: true, report: { ...r, dryRun: body.dryRun === true } })
+        }
+        if (req.method === 'GET' && p === '/audit') {
+          const sinceDays = Number(url.searchParams.get('sinceDays')) || undefined
+          const type = url.searchParams.get('type') || undefined
+          const recs = queryAudit({ sinceDays, type })
+          return send(200, { ok: true, entries: recs.slice(-50) })
+        }
+        return send(404, { ok: false, error: 'not found' })
+      } catch (err) {
+        return send(500, { ok: false, error: String(err && err.message || err) })
+      }
+    },
+  }), 'dsh-biomemory: settings web API')
+  }
+
+  // 5. DSH 事件 → 桌宠状态机（默认关闭）
   ctx.on('session/event', (session, rawEvent) => {
     const ev = rawEvent ?? {}
     const evType = typeof ev.type === 'string' ? ev.type : ''
