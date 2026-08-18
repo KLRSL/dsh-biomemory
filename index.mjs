@@ -16,19 +16,25 @@
 //   - [知识|自动] [fp:xxx] [w:12] [h:3] [t:2026-08-16 13:00] [pin] 文本
 //     w=权重（默认10） h=引用计数（巩固用） t=写入时间 pin=锁定（不参与衰减）
 //
-// 能力（v0.3.0）：
+// 能力（v0.4.0）：
 //   1. memory 工具：add / query / remove / list / pin / unpin / dream / audit
 //   2. 冻结快照注入：systemPrompt.section({ name, order, text })，会话启动冻结，
-//      注入优先级：锁定 > preferences > knowledge > behavior，热区 token 上限可配
-//   3. 分级审批门：重要记忆走 approval.request（ask），普通事实 auto；fail closed
-//   4. 记忆代谢（/memory dream，手动触发）：半衰期衰减 + 引用巩固 + 冲突仲裁 +
-//      低权重归档；支持 --dry-run 预览；执行前自动备份到 backups/
-//   5. 记忆钉：pin/unpin，锁定记忆不参与衰减，无条件注入热区
-//   6. 结构化审计：audit.jsonl 记录 WRITE/DECAY/CONSOLIDATE/CONFLICT/ARCHIVE/PIN/UNPIN
-//   7. 语义检索：纯 JS TF-IDF + cosine（无原生模块、无外部依赖），关键词匹配降级
-//   8. 配置化：半衰期/衰减阈值/巩固阈值/权重上限/热区 token 上限均可配置
-//   9. 启动自检：主文件解析失败时自动从最近备份回滚
-//  10. memory_recall：跨会话召回
+//      注入优先级：锁定 > preferences > 权重/时间排序的热区，token 预算内取最有价值
+//   3. 分级审批门 + 自动保存降级：重要记忆走 approval.request（ask）；审批不可用
+//      （如审批策略 never）时按 approvalFallback 自动保存（默认 auto，审计标记
+//      AUTO-FALLBACK；可配 deny 保持 fail closed）
+//   4. 自动巩固（用进废退）：查询/召回命中即 hits+1 写回，权重随引用增长
+//   5. 记忆代谢（dream）：半衰期衰减 + 引用巩固 + 冲突仲裁 + 低权重归档；
+//      支持 --dry-run 预览；执行前自动备份到 backups/；可配置启动时自动执行
+//   6. 记忆钉：pin/unpin，锁定记忆不参与衰减，无条件注入热区
+//   7. 结构化审计：audit.jsonl 记录 WRITE/DECAY/CONSOLIDATE/CONFLICT/ARCHIVE/PIN/UNPIN/REFLECT
+//   8. 语义检索：纯 JS TF-IDF + cosine（无原生模块、无外部依赖），关键词匹配降级
+//   9. 配置化：半衰期/衰减阈值/巩固阈值/权重上限/热区 token 上限/自动周期均可配置
+//  10. 启动自检：主文件解析失败时自动从最近备份回滚
+//  11. memory_recall：跨会话召回
+//  12. 深度反思（reflect）：纯本地主题聚类 + 趋势统计 + 冲突提醒 + 遗忘建议，
+//      报告写入 longterm/reflections/，可配置启动时自动执行
+//  13. 知识页：Web API 条目浏览/搜索/pin/unpin/安全删除 + 设置页三 tab 界面
 //
 // 官方契约要点（rc.5，逐条核对过 lib 源码）：
 //   - 工具体签名是 execute(args, exec)，不是 call()；exec.agent.id 即会话 id
@@ -61,6 +67,9 @@ const DEFAULTS = {
   weightCap: 20,          // 巩固权重上限（防膨胀）
   hotTokenLimit: 5000,    // 快照注入热区 token 上限
   maxQueryResults: 20,    // 查询返回上限
+  approvalFallback: 'auto', // 审批不可用（策略 never/服务缺失）时：auto=自动保存并审计 / deny=拒绝写入
+  autoDreamDays: 7,       // 启动时距上次代谢 ≥ 此天数 → 自动执行（0=关闭）
+  autoReflectDays: 3,     // 启动时距上次反思 ≥ 此天数 → 自动执行（0=关闭）
 }
 
 let CFG = { ...DEFAULTS }
@@ -87,7 +96,14 @@ function loadConfig() {
     const merged = { ...DEFAULTS }
     for (const k of Object.keys(DEFAULTS)) {
       const v = saved[k]
-      if (v !== undefined && Number.isFinite(Number(v)) && Number(v) > 0) merged[k] = Number(v)
+      if (k === 'approvalFallback') {
+        if (v === 'auto' || v === 'deny') merged[k] = v
+        continue
+      }
+      if (v === undefined || !Number.isFinite(Number(v))) continue
+      const n = Number(v)
+      if (k === 'autoDreamDays' || k === 'autoReflectDays') { if (n >= 0) merged[k] = n } // 0=关闭
+      else if (n > 0) merged[k] = n
     }
     if (typeof saved.petEndpoint === 'string') merged.petEndpoint = saved.petEndpoint
     return merged
@@ -303,7 +319,7 @@ function estimateTokens(s) {
 
 // ---------- 写入记忆（带审计；approval 在调用方 gate） ----------
 
-function writeEntry({ track, text, sessionId, approved }) {
+function writeEntry({ track, text, sessionId, approved, mode }) {
   ensureDirs()
   const fp = fingerprint(text)
   const file = track === 'user' ? PATHS.hotKnowledge : PATHS.hotBehavior
@@ -311,9 +327,10 @@ function writeEntry({ track, text, sessionId, approved }) {
   if (existing.includes(`[fp:${fp}]`)) {
     return { ok: true, skipped: true, reason: 'duplicate' }
   }
-  const entry = { kind: track === 'user' ? '知识' : '行为', mode: approved ? '审批' : '自动', fp, weight: 10, hits: 0, ts: nowStamp(), pinned: false, text: text.trim() }
+  const modeLabel = mode === 'fallback' ? '降级' : (mode === 'ask' ? '审批' : (mode === 'auto' ? '自动' : (approved ? '审批' : '自动')))
+  const entry = { kind: track === 'user' ? '知识' : '行为', mode: modeLabel, fp, weight: 10, hits: 0, ts: nowStamp(), pinned: false, text: text.trim() }
   appendFile(file, `## ${nowStamp()} · 会话 ${sessionId || '?'}\n${formatEntryLine(entry)}\n`)
-  audit('WRITE', { fp, track, approved: approved ? 'APPROVED' : 'AUTO', text: text.trim() })
+  audit('WRITE', { fp, track, approved: modeLabel, fallback: mode === 'fallback' ? true : undefined, text: text.trim() })
   if (track === 'user') {
     appendFile(PATHS.preferences, `- [${nowStamp()}] ${text.trim()}\n`)
   }
@@ -368,14 +385,16 @@ function latestBackup() {
   return dirs.length ? path.join(PATHS.backups, dirs[0]) : null
 }
 
+// 中文双字 bigram 集合（主题相似度/冲突检测共用）
+function zhBigrams(s) {
+  const out = new Set()
+  const chars = s.replace(/[^\u4e00-\u9fff]/g, '')
+  for (let i = 0; i < chars.length - 1; i++) out.add(chars.slice(i, i + 2))
+  return out
+}
+
 // 冲突仲裁：行为条目的关键词与偏好冲突 → 偏好优先，行为降权并记录
 function detectConflict(entry, prefsText) {
-  const zhBigrams = (s) => {
-    const out = new Set()
-    const chars = s.replace(/[^\u4e00-\u9fff]/g, '')
-    for (let i = 0; i < chars.length - 1; i++) out.add(chars.slice(i, i + 2))
-    return out
-  }
   const eb = zhBigrams(entry.text)
   const pb = zhBigrams(prefsText)
   let overlap = 0
@@ -453,6 +472,123 @@ function runDream(opts = {}) {
   return report
 }
 
+// ---------- 深度反思（reflect：主题聚类 + 趋势 + 冲突 + 遗忘建议） ----------
+
+// 贪心主题聚类：TF 向量余弦相似度 ≥ 0.25 的条目归为一簇（复用 tokenize/余弦，
+// 比 bigram Jaccard 更能容忍长句；共享专有名词即可聚，功能词不会误触发）
+function clusterEntries(entries) {
+  const vecOf = (e) => {
+    const tf = new Map()
+    for (const t of tokenize(e.text)) tf.set(t, (tf.get(t) || 0) + 1)
+    return tf
+  }
+  const items = entries.map((e) => ({ ...e, vec: vecOf(e) }))
+  const clusters = []
+  const used = new Set()
+  for (const it of items) {
+    if (used.has(it.fp)) continue
+    const cluster = { members: [it], vecs: [it.vec] }
+    used.add(it.fp)
+    for (;;) {
+      let best = null, bestScore = 0
+      for (const cand of items) {
+        if (used.has(cand.fp)) continue
+        let maxScore = 0
+        for (const v of cluster.vecs) maxScore = Math.max(maxScore, cosine(v, cand.vec))
+        if (maxScore > bestScore) { bestScore = maxScore; best = cand }
+      }
+      if (!best || bestScore < 0.25) break
+      cluster.members.push(best)
+      cluster.vecs.push(best.vec)
+      used.add(best.fp)
+    }
+    if (cluster.members.length >= 2) {
+      cluster.members.sort((a, b) => b.weight - a.weight)
+      clusters.push(cluster)
+    }
+  }
+  clusters.sort((a, b) => b.members.length - a.members.length)
+  return clusters
+}
+
+// 最近一次反思报告
+function latestReflection() {
+  const dir = path.join(MEMORY_ROOT, 'longterm', 'reflections')
+  if (!fs.existsSync(dir)) return null
+  const files = fs.readdirSync(dir).filter((f) => f.endsWith('.md')).sort().reverse()
+  return files.length ? path.join(dir, files[0]) : null
+}
+
+// 执行深度反思。opts: { dryRun }
+// 返回 { scanned, recent7, prev7, clusters, conflicts, forget, reportFile, text, dryRun }
+function runReflect(opts = {}) {
+  const dryRun = opts.dryRun === true
+  const all = scanAllFiles()
+  const entries = []
+  for (const f of all) for (const e of f.entries) entries.push({ layer: f.layer, ...e })
+  const DAY = 86400000
+  const now = Date.now()
+  const ageOf = (e) => {
+    if (!e.ts) return null
+    const t = new Date(e.ts.replace(' ', 'T'))
+    return Number.isNaN(t.getTime()) ? null : t.getTime()
+  }
+  const recent7 = entries.filter((e) => { const a = ageOf(e); return a !== null && now - a < 7 * DAY })
+  const prev7 = entries.filter((e) => { const a = ageOf(e); return a !== null && now - a >= 7 * DAY && now - a < 14 * DAY })
+  const live = entries.filter((e) => e.layer !== 'preferences' && !e.layer.startsWith('archive'))
+  const clusters = clusterEntries(live)
+  const prefsText = readFile(PATHS.preferences)
+  const conflicts = entries.filter((e) => e.layer.startsWith('hot/behavior') && detectConflict(e, prefsText))
+  const forget = live
+    .filter((e) => !e.pinned && e.weight < CFG.decayThreshold * 1.5)
+    .sort((a, b) => a.weight - b.weight)
+    .slice(0, 10)
+  const byLayer = {}
+  for (const e of entries) byLayer[e.layer] = (byLayer[e.layer] || 0) + 1
+  const trend = prev7.length === 0 ? '（上周无数据）' : recent7.length > prev7.length ? '活跃上升' : recent7.length < prev7.length ? '趋于平稳' : '持平'
+  const stamp = nowStamp()
+  const lines = [
+    `# 深度反思 ${stamp}`,
+    '',
+    `- 条目总数：${entries.length}（${Object.entries(byLayer).map(([l, n]) => `${l} ${n}`).join(' · ')}）`,
+    `- 近 7 天写入：${recent7.length} 条（上一周 ${prev7.length} 条，${trend}）`,
+    `- 主题聚类：${clusters.length} 个（≥2 条相似记忆）`,
+    `- 潜在冲突：${conflicts.length} 条行为记忆与偏好冲突`,
+    `- 遗忘候选：${forget.length} 条低权重记忆（< ${CFG.decayThreshold * 1.5}）`,
+    '',
+    '## 主题聚类',
+    ...(clusters.length
+      ? clusters.map((c, i) => `### 主题 ${i + 1}（${c.members.length} 条）\n${c.members.slice(0, 6).map((m) => `- [${m.layer}] [w:${m.weight}] ${m.text}`).join('\n')}`)
+      : ['（暂无相似记忆聚类）']),
+    '## 潜在冲突',
+    ...(conflicts.length ? conflicts.map((c) => `- [${c.layer}] [fp:${c.fp}] ${c.text}`) : ['（无）']),
+    '## 遗忘候选（可人工删除或归档）',
+    ...(forget.length ? forget.map((f) => `- [${f.layer}] [w:${f.weight}] ${f.text}`) : ['（无）']),
+  ]
+  const text = lines.join('\n') + '\n'
+  let reportFile = null
+  if (!dryRun) {
+    const dir = path.join(MEMORY_ROOT, 'longterm', 'reflections')
+    fs.mkdirSync(dir, { recursive: true })
+    reportFile = path.join(dir, stamp.replace(/[^\d]/g, '').slice(0, 12) + '.md')
+    writeFile(reportFile, text)
+    audit('REFLECT', { scanned: entries.length, clusters: clusters.length, conflicts: conflicts.length, reportFile })
+  }
+  return {
+    dryRun,
+    scanned: entries.length,
+    recent7: recent7.length,
+    prev7: prev7.length,
+    trend,
+    byLayer,
+    clusters: clusters.map((c) => ({ size: c.members.length, members: c.members.slice(0, 6).map((m) => ({ layer: m.layer, fp: m.fp, text: m.text, weight: m.weight })) })),
+    conflicts: conflicts.map((c) => ({ layer: c.layer, fp: c.fp, text: c.text })),
+    forget: forget.map((f) => ({ layer: f.layer, fp: f.fp, weight: f.weight, text: f.text })),
+    reportFile,
+    text,
+  }
+}
+
 // ---------- 语义检索（纯 JS TF-IDF + cosine，无外部依赖） ----------
 
 function tokenize(s) {
@@ -513,16 +649,48 @@ function semanticSearch(query, entries, topN = 5) {
   return scored.slice(0, topN)
 }
 
-// ---------- 查询（关键词优先，语义补充） ----------
+// ---------- 自动巩固（用进废退）+ 安全删除 ----------
+
+// 被查询/召回的条目 hits+1 并写回（引用越多越不易被遗忘）
+function consolidateHits(fpSet) {
+  if (!fpSet || !fpSet.size) return 0
+  let files = 0
+  for (const f of scanAllFiles()) {
+    let dirty = false
+    for (const e of f.entries) {
+      if (fpSet.has(e.fp)) { e.hits += 1; dirty = true }
+    }
+    if (dirty) { rewriteFile(f.file, f.entries); files++ }
+  }
+  return files
+}
+
+// 安全删除：先备份主文件到 backups/ 再删条目（可回滚，保持透明可改）
+function removeEntry(fp) {
+  for (const f of scanAllFiles()) {
+    const e = f.entries.find((x) => x.fp === fp)
+    if (e) {
+      const bk = backupNow()
+      rewriteFile(f.file, f.entries.filter((x) => x.fp !== fp))
+      audit('REMOVE', { fp, layer: f.layer, text: e.text, backup: bk })
+      return { ok: true, fp, layer: f.layer, text: e.text, backup: bk }
+    }
+  }
+  return { ok: false, error: `未找到 [fp:${fp}]` }
+}
+
+// ---------- 查询（关键词优先，语义补充；命中自动巩固） ----------
 
 function queryEntries(query, limit = CFG.maxQueryResults) {
   const out = []
   const ql = query.toLowerCase()
+  const hitFps = new Set()
   // 关键词精确匹配（命中 +1 引用计数，写回以巩固；读文件本身只读一次避免写放大）
   for (const f of scanAllFiles()) {
     for (const e of f.entries) {
       if (!ql || e.text.toLowerCase().includes(ql)) {
         out.push({ layer: f.layer, fp: e.fp, text: e.text, weight: e.weight })
+        if (ql) hitFps.add(e.fp)
       }
     }
   }
@@ -535,8 +703,16 @@ function queryEntries(query, limit = CFG.maxQueryResults) {
     const byFp = new Map(all.map((e) => [e.fp, e]))
     for (const s of sem) {
       const e = byFp.get(s.fp)
-      if (e) out.push({ layer: e.layer, fp: e.fp, text: e.text, weight: e.weight, semantic: true })
+      if (e) {
+        out.push({ layer: e.layer, fp: e.fp, text: e.text, weight: e.weight, semantic: true })
+        hitFps.add(e.fp)
+      }
     }
+  }
+  // 用进废退：带关键词的真实召回才巩固（list 浏览不计）
+  if (ql && hitFps.size) {
+    const files = consolidateHits(hitFps)
+    if (files) audit('RECALL', { count: hitFps.size, files })
   }
   return out.slice(0, limit)
 }
@@ -552,15 +728,18 @@ function renderSnapshot() {
   for (const f of all) {
     for (const e of f.entries) {
       if (e.pinned) pinned.push(`- [锁定|${f.layer}] ${e.text}`)
-      else if (f.layer === 'hot/knowledge') kb.push(`- [${f.layer}] ${e.text}`)
-      else if (f.layer === 'hot/behavior') bb.push(`- [${f.layer}] ${e.text}`)
+      else if (f.layer === 'hot/knowledge') kb.push(e)
+      else if (f.layer === 'hot/behavior') bb.push(e)
     }
   }
+  // 自动召回排序：权重高、新近的优先（预算内只注入最有价值的）
+  const rank = (a, b) => (b.weight - a.weight) || (String(b.ts || '').localeCompare(String(a.ts || '')))
+  const fmt = (e) => `- [${e.layer}] ${e.text}`
   const parts = []
   if (prefs) parts.push('## 用户偏好（最高优先级）\n' + prefs)
   if (pinned.length) parts.push('## 锁定记忆（最高优先级，不参与衰减）\n' + pinned.join('\n'))
-  if (kb.length) parts.push('## 近期知识记忆\n' + kb.join('\n'))
-  if (bb.length) parts.push('## 近期行为记忆\n' + bb.join('\n'))
+  if (kb.length) parts.push('## 近期知识记忆\n' + kb.sort(rank).map(fmt).join('\n'))
+  if (bb.length) parts.push('## 近期行为记忆\n' + bb.sort(rank).map(fmt).join('\n'))
   if (!parts.length) return ''
   let text = `# 记忆快照（dsh-biomemory，会话冻结）\n\n${parts.join('\n\n')}`
   // 热区 token 硬限制：超出部分截断（保留偏好与锁定）
@@ -577,25 +756,32 @@ function renderSnapshot() {
   return text
 }
 
-// ---------- 审批门（分级：重要 ask / 普通 auto；approval 可选消费） ----------
+// ---------- 审批门（分级：重要 ask / 普通 auto；审批不可用按 approvalFallback 降级） ----------
 
 async function gateWrite(ctx, { track, text }) {
   const important = isImportant(text, track)
   if (!important) {
     return { approved: true, mode: 'auto' }
   }
+  const fallback = () => CFG.approvalFallback === 'auto'
+    ? { approved: true, mode: 'fallback' }
+    : { approved: false, mode: 'ask', outcome: 'unavailable' }
   const approval = ctx.get('approval')
   if (!approval) {
-    return { approved: false, mode: 'ask', outcome: 'unavailable' }
+    return fallback()
   }
   try {
     const outcome = await approval.request({
       toolName: TOOL_NAME,
       reason: `${REQUEST_MARKER} add ${track}\n${text}`,
     })
-    return { approved: outcome === 'allowed-once', mode: 'ask', outcome }
+    if (outcome === 'allowed-once') return { approved: true, mode: 'ask' }
+    // 策略 never / 被拒 / 取消：按 fallback 策略决定是否自动保存（审计会标记）
+    return CFG.approvalFallback === 'auto'
+      ? { approved: true, mode: 'fallback', outcome }
+      : { approved: false, mode: 'ask', outcome }
   } catch {
-    return { approved: false, mode: 'ask', outcome: 'unavailable' }
+    return fallback()
   }
 }
 
@@ -653,24 +839,25 @@ function makeMemoryTool(ctx) {
     name: TOOL_NAME,
     description: [
       '跨会话记忆系统：保存/查询值得记住的事实、偏好、教训。',
-      '用法: memory action=add text="..." [track=user|agent] —— 保存（重要项会自动请求审批）',
-      '      memory action=query text="关键词" —— 查询（关键词优先，语义补充）',
-      '      memory action=remove fp="指纹" —— 删除一条（按指纹）',
+      '用法: memory action=add text="..." [track=user|agent] —— 保存（重要项自动请求审批，审批不可用时按配置自动保存）',
+      '      memory action=query text="关键词" —— 查询（关键词优先，语义补充；命中自动巩固）',
+      '      memory action=remove fp="指纹" —— 删除一条（自动备份，可回滚）',
       '      memory action=list —— 列出全部条目',
       '      memory action=pin fp="指纹" —— 锁定（不参与衰减）',
       '      memory action=unpin fp="指纹" —— 解锁',
       '      memory action=dream [dryRun=true] —— 记忆代谢（衰减/巩固/归档）',
+      '      memory action=reflect [dryRun=true] —— 深度反思（主题聚类/趋势/冲突/遗忘建议）',
       '      memory action=audit [type="DECAY"] [sinceDays=7] —— 结构化审计查询',
       '保存原则：用户偏好/纠正/项目决策/踩坑教训要保存；琐事、一次性路径、可从代码重新推导的事实不保存。',
     ].join('\n'),
     parameters: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['add', 'query', 'remove', 'list', 'pin', 'unpin', 'dream', 'audit'], description: '操作' },
+        action: { type: 'string', enum: ['add', 'query', 'remove', 'list', 'pin', 'unpin', 'dream', 'reflect', 'audit'], description: '操作' },
         text: { type: 'string', description: 'add 的内容 或 query 的关键词' },
         track: { type: 'string', enum: ['user', 'agent'], description: 'user=用户偏好/知识；agent=行为/教训（默认 agent）' },
         fp: { type: 'string', description: 'remove/pin/unpin 时按指纹' },
-        dryRun: { type: 'boolean', description: 'dream 时预览不执行' },
+        dryRun: { type: 'boolean', description: 'dream/reflect 时预览不执行' },
         type: { type: 'string', description: 'audit 过滤事件类型' },
         sinceDays: { type: 'number', description: 'audit 只看最近 N 天' },
       },
@@ -703,6 +890,13 @@ function makeMemoryTool(ctx) {
         }
         if (value.report) {
           const r = value.report
+          if (Array.isArray(r.clusters)) {
+            // 深度反思报告
+            const head = `【深度反思${r.dryRun ? '预览' : ''}】条目 ${r.scanned}：主题聚类 ${r.clusters.length} · 潜在冲突 ${r.conflicts.length} · 遗忘候选 ${r.forget.length}\n近 7 天写入 ${r.recent7} 条（上一周 ${r.prev7} 条）`
+            const detail = r.clusters.slice(0, 5).map((c) => `- 主题（${c.size} 条）：${c.members.slice(0, 2).map((m) => m.text).join(' / ')}`).join('\n')
+            const fileNote = r.reportFile ? `\n报告：${r.reportFile}` : '（预览不落盘）'
+            return [{ type: 'text', text: detail ? `${head}\n${detail}${fileNote}` : `${head}${fileNote}` }]
+          }
           const head = `${r.dryRun ? '【预览】' : ''}扫描 ${r.scanned} 条：衰减 ${r.decayed} · 巩固 ${r.consolidated} · 冲突 ${r.conflicted} · 归档 ${r.archived}\n备份：${r.backup}`
           const detail = r.items.slice(0, 15).map((it) => `- ${it.op} [${it.layer}] [fp:${it.fp}] ${it.to !== undefined ? `→ ${it.to}` : ''}`).join('\n')
           return [{ type: 'text', text: detail ? `${head}\n${detail}` : head }]
@@ -721,15 +915,16 @@ function makeMemoryTool(ctx) {
       if (action === 'add') {
         if (!text.trim()) return { ok: false, error: 'text 必填' }
         const g = await gateWrite(ctx, { track, text: text.trim() })
-        if (!g.approved) return { ok: false, error: `写入未获批准（${g.outcome || 'denied'}）——重要记忆需人工审批` }
-        const r = writeEntry({ track, text: text.trim(), sessionId, approved: g.mode === 'ask' })
+        if (!g.approved) return { ok: false, error: `写入未获批准（${g.outcome || 'denied'}）——重要记忆需人工审批（可设置 approvalFallback=auto 自动保存）` }
+        const r = writeEntry({ track, text: text.trim(), sessionId, approved: g.mode === 'ask', mode: g.mode })
         return { ok: true, ...r, mode: g.mode }
       }
       if (action === 'query') return { ok: true, entries: queryEntries(text) }
       if (action === 'list') return { ok: true, entries: queryEntries('') }
       if (action === 'remove') {
         if (!fp) return { ok: false, error: 'fp 必填（先 query 找到指纹）' }
-        return { ok: true, note: `删除请在 ${MEMORY_ROOT} 中按指纹手动编辑（保持文件透明可改）` }
+        const r = removeEntry(fp)
+        return r.ok ? { ok: true, note: `已删除 [fp:${fp}]（备份：${r.backup}）` } : r
       }
       if (action === 'pin' || action === 'unpin') {
         if (!fp) return { ok: false, error: 'fp 必填（先 query 找到指纹）' }
@@ -740,10 +935,14 @@ function makeMemoryTool(ctx) {
         const r = runDream({ dryRun: dryRun === true })
         return { ok: true, report: { ...r, dryRun: dryRun === true } }
       }
+      if (action === 'reflect') {
+        const r = runReflect({ dryRun: dryRun === true })
+        return { ok: true, report: { ...r, dryRun: dryRun === true } }
+      }
       if (action === 'audit') {
         const recs = queryAudit({ sinceDays, type })
         if (!recs.length) return { ok: true, note: '（无匹配审计记录）' }
-        return { ok: true, note: recs.slice(-20).map((r) => `${r.t.slice(0, 16)} ${r.event} ${r.fp || ''} ${r.text || ''}`).join('\n') }
+        return { ok: true, note: recs.slice(-20).map((r) => `${r.t.slice(0, 16)} ${r.event} ${r.fp || ''} ${r.approved ? '[' + r.approved + ']' : ''} ${r.text || ''}`).join('\n') }
       }
       return { ok: false, error: '未知 action' }
     },
@@ -791,7 +990,7 @@ function registerMemoryCommand(ctx) {
   ctx.inject(['commands'], (commandCtx) => {
     commandCtx.commands.register({
       name: 'memory',
-      description: '记忆管理：list / query <词> / add <内容> / remove <fp> / pin <fp> / unpin <fp> / dream [--dry-run] / audit [--since 7d] [--type DECAY]',
+      description: '记忆管理：list / query <词> / add <内容> / remove <fp> / pin <fp> / unpin <fp> / dream [--dry-run] / reflect [--dry-run] / entries [词] / audit [--since 7d] [--type DECAY]',
       handler(invocation) {
         const { rawInput, agent } = invocation
         const tokens = (rawInput || '').trim().split(/\s+/)
@@ -814,7 +1013,30 @@ function registerMemoryCommand(ctx) {
           return { kind: 'success', text: r.skipped ? '重复，已跳过' : `已保存 [fp:${r.fp}]（人类发起）` }
         }
         if (verb === 'remove') {
-          return { kind: 'success', text: `删除请直接编辑 ${MEMORY_ROOT} 对应文件（保持透明可改）` }
+          const fp = rest[0]
+          if (!fp) return { kind: 'success', text: '用法: /memory remove <fp>' }
+          const r = removeEntry(fp)
+          return { kind: 'success', text: r.ok ? `已删除 [fp:${fp}]（备份：${r.backup}）` : r.error }
+        }
+        if (verb === 'entries') {
+          const q = rest.join(' ')
+          const es = queryEntries(q, 50).map((e) => {
+            const meta = []
+            if (e.weight !== undefined) meta.push(`w${e.weight}`)
+            if (e.hits !== undefined) meta.push(`h${e.hits}`)
+            if (e.ts) meta.push(e.ts)
+            if (e.pinned) meta.push('PIN')
+            if (e.semantic) meta.push('语义')
+            return `- [${e.layer}] [${meta.join(' ')}] ${e.text}`
+          })
+          return { kind: 'success', text: es.length ? es.join('\n') : (q ? `（无匹配：${q}）` : '（记忆为空）') }
+        }
+        if (verb === 'reflect') {
+          const dryRun = rest.includes('--dry-run')
+          const r = runReflect({ dryRun })
+          const head = `${dryRun ? '【预览】' : ''}条目 ${r.scanned}：主题聚类 ${r.clusters.length} · 冲突 ${r.conflicts.length} · 遗忘候选 ${r.forget.length} · 近7天写入 ${r.recent7}（上周 ${r.prev7}）`
+          const detail = r.clusters.slice(0, 5).map((c) => `- 主题（${c.size} 条）：${c.members.slice(0, 2).map((m) => m.text).join(' / ')}`).join('\n')
+          return { kind: 'success', text: detail ? `${head}\n${detail}` : head }
         }
         if (verb === 'pin' || verb === 'unpin') {
           const fp = rest[0]
@@ -841,9 +1063,9 @@ function registerMemoryCommand(ctx) {
             if (rest[i] === '--type' && rest[i + 1]) { type = rest[i + 1].toUpperCase(); i++ }
           }
           const recs = queryAudit({ sinceDays, type })
-          return { kind: 'success', text: recs.length ? recs.slice(-20).map((r) => `${r.t.slice(0, 16)} ${r.event} ${r.fp || ''} ${r.text || ''}`).join('\n') : '（无匹配审计记录）' }
+          return { kind: 'success', text: recs.length ? recs.slice(-20).map((r) => `${r.t.slice(0, 16)} ${r.event} ${r.fp || ''} ${r.approved ? '[' + r.approved + ']' : ''} ${r.text || ''}`).join('\n') : '（无匹配审计记录）' }
         }
-        return { kind: 'success', text: '用法: /memory list | query <词> | add <内容> | remove <fp> | pin <fp> | unpin <fp> | dream [--dry-run] | audit [--since 7d] [--type DECAY]' }
+        return { kind: 'success', text: '用法: /memory list | query <词> | add <内容> | remove <fp> | pin <fp> | unpin <fp> | entries [词] | dream [--dry-run] | reflect [--dry-run] | audit [--since 7d] [--type DECAY]' }
       },
     })
   })
@@ -897,6 +1119,28 @@ export function apply(ctx, config = {}) {
   selfHeal()
   dbgLog('=== apply 执行 ===')
 
+  // 0. 启动自动代谢/反思（距上次执行 ≥ 配置天数时自动执行，0=关闭）
+  try {
+    if (CFG.autoDreamDays > 0) {
+      const lb = latestBackup()
+      if (!lb || Date.now() - fs.statSync(lb).mtimeMs >= CFG.autoDreamDays * 86400000) {
+        const r = runDream()
+        audit('AUTO-DREAM', { scanned: r.scanned, decayed: r.decayed, archived: r.archived })
+        dbgLog(`auto dream: scanned=${r.scanned}`)
+      }
+    }
+    if (CFG.autoReflectDays > 0) {
+      const lr = latestReflection()
+      if (!lr || Date.now() - fs.statSync(lr).mtimeMs >= CFG.autoReflectDays * 86400000) {
+        const r = runReflect()
+        audit('AUTO-REFLECT', { reportFile: r.reportFile })
+        dbgLog(`auto reflect: ${r.reportFile}`)
+      }
+    }
+  } catch (err) {
+    dbgLog(`auto run failed: ${String(err && err.message || err)}`)
+  }
+
   // 1. 冻结快照注入（会话启动 → system prompt；官方 PromptSection = {name, order, text}）
   ctx.systemPrompt.section({
     name: 'memory:snapshot',
@@ -912,10 +1156,13 @@ export function apply(ctx, config = {}) {
   registerMemoryCommand(ctx)
 
   // 4. 设置页 Web API（官方契约：ctx.webServer.register，kind=prefix；webServer 缺失时自动跳过）
-  //    端点：/biomemory/api/status  GET 记忆统计+配置
-  //          /biomemory/api/config  GET 配置 / POST 更新配置
-  //          /biomemory/api/dream   POST 触发记忆代谢 { dryRun }
-  //          /biomemory/api/audit   GET 审计查询 ?sinceDays=&type=
+  //    端点：/biomemory/api/status   GET  记忆统计+配置
+  //          /biomemory/api/config   GET 配置 / POST 更新配置
+  //          /biomemory/api/dream    POST 触发记忆代谢 { dryRun }
+  //          /biomemory/api/reflect  POST 触发深度反思 { dryRun }
+  //          /biomemory/api/entries  GET 条目浏览/搜索 ?q=&layer=&limit=（知识页）
+  //          /biomemory/api/entries/pin|unpin|remove  POST 条目操作
+  //          /biomemory/api/audit    GET 审计查询 ?sinceDays=&type=
   //    注：不能直接访问 ctx.webServer —— Cordis service 未注入时 Proxy getter 抛
   //    "cannot get property without inject"（?. 拦不住）。用 ctx.inject 懒注入：
   //    依赖就绪后自动执行注册，缺失时静默跳过（官方 dsh-client-ui-theme 同款写法）。
@@ -951,7 +1198,7 @@ export function apply(ctx, config = {}) {
         if (req.method === 'POST' && p === '/config') {
           let body = {}
           try { body = JSON.parse(await readBody(req)) } catch { /* ignore */ }
-          const allowed = ['halfLifeDays', 'decayThreshold', 'consolidateThreshold', 'weightCap', 'hotTokenLimit', 'maxQueryResults', 'petEndpoint']
+          const allowed = ['halfLifeDays', 'decayThreshold', 'consolidateThreshold', 'weightCap', 'hotTokenLimit', 'maxQueryResults', 'approvalFallback', 'autoDreamDays', 'autoReflectDays', 'petEndpoint']
           // reset：恢复默认（删除持久化文件）
           if (body.reset === true) {
             try { fs.unlinkSync(PATHS.config) } catch { /* ignore */ }
@@ -964,9 +1211,10 @@ export function apply(ctx, config = {}) {
           for (const k of allowed) {
             if (body[k] !== undefined) {
               if (k === 'petEndpoint') next[k] = typeof body[k] === 'string' && body[k] ? body[k] : null
+              else if (k === 'approvalFallback') next[k] = body[k] === 'deny' ? 'deny' : 'auto'
               else {
                 const v = Number(body[k])
-                if (Number.isFinite(v) && v > 0) next[k] = v
+                if (Number.isFinite(v) && v >= 0) next[k] = v
               }
             }
           }
@@ -981,6 +1229,48 @@ export function apply(ctx, config = {}) {
           try { body = JSON.parse(await readBody(req)) } catch { /* ignore */ }
           const r = runDream({ dryRun: body.dryRun === true })
           return send(200, { ok: true, report: { ...r, dryRun: body.dryRun === true } })
+        }
+        if (req.method === 'POST' && p === '/reflect') {
+          let body = {}
+          try { body = JSON.parse(await readBody(req)) } catch { /* ignore */ }
+          const r = runReflect({ dryRun: body.dryRun === true })
+          return send(200, { ok: true, report: { ...r, dryRun: body.dryRun === true } })
+        }
+        if (req.method === 'GET' && p === '/entries') {
+          const q = url.searchParams.get('q') || ''
+          const layer = url.searchParams.get('layer') || ''
+          const limit = Math.min(500, Number(url.searchParams.get('limit')) || 200)
+          const all = []
+          for (const f of scanAllFiles()) {
+            for (const e of f.entries) {
+              if (layer && f.layer !== layer) continue
+              if (q && !(e.text.toLowerCase().includes(q.toLowerCase()) || semanticSearch(q, [{ fp: e.fp, text: e.text }], 1).length)) continue
+              all.push({ layer: f.layer, fp: e.fp, kind: e.kind, mode: e.mode, weight: e.weight, hits: e.hits, ts: e.ts, pinned: e.pinned, text: e.text })
+            }
+          }
+          all.sort((a, b) => (b.pinned - a.pinned) || (b.weight - a.weight) || String(b.ts || '').localeCompare(String(a.ts || '')))
+          return send(200, { ok: true, entries: all.slice(0, limit) })
+        }
+        if (req.method === 'POST' && p === '/entries/pin') {
+          let body = {}
+          try { body = JSON.parse(await readBody(req)) } catch { /* ignore */ }
+          if (!body.fp) return send(400, { ok: false, error: 'fp 必填' })
+          const r = setPin(body.fp, true)
+          return r.ok ? send(200, { ok: true, fp: r.fp, pinned: true }) : send(404, r)
+        }
+        if (req.method === 'POST' && p === '/entries/unpin') {
+          let body = {}
+          try { body = JSON.parse(await readBody(req)) } catch { /* ignore */ }
+          if (!body.fp) return send(400, { ok: false, error: 'fp 必填' })
+          const r = setPin(body.fp, false)
+          return r.ok ? send(200, { ok: true, fp: r.fp, pinned: false }) : send(404, r)
+        }
+        if (req.method === 'POST' && p === '/entries/remove') {
+          let body = {}
+          try { body = JSON.parse(await readBody(req)) } catch { /* ignore */ }
+          if (!body.fp) return send(400, { ok: false, error: 'fp 必填' })
+          const r = removeEntry(body.fp)
+          return r.ok ? send(200, { ok: true, fp: r.fp, backup: r.backup }) : send(404, r)
         }
         if (req.method === 'GET' && p === '/audit') {
           const sinceDays = Number(url.searchParams.get('sinceDays')) || undefined
@@ -1043,10 +1333,17 @@ export const __internals = {
   isImportant,
   estimateTokens,
   detectConflict,
+  zhBigrams,
   runDream,
+  runReflect,
+  clusterEntries,
+  latestReflection,
+  consolidateHits,
+  removeEntry,
   semanticSearch,
   tokenize,
   queryAudit,
+  queryEntries,
   setPin,
   scanAllFiles,
   backupNow,

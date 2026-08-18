@@ -5,12 +5,16 @@ window.__ModuleLoader__.load({
 		var exports = module.exports;
 		Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
 		let react = require("react");
+		let prim = require("@deepseek-ai/dsh-client-ui-primitives");
 		//#region src/client/index.ts
-		/** Biomemory settings page: memory stats, config, dream, audit. */
+		/** Biomemory settings page: memory stats, config, knowledge base, reflection. */
 		const copy = {
 			"zh-CN": {
 				tab: "记忆",
 				title: "记忆系统",
+				tabSettings: "设置",
+				tabKnowledge: "知识库",
+				tabReflect: "深度反思",
 				loading: "正在读取状态…",
 				unavailable: "暂时无法读取运行状态，但记忆系统不会影响现有工具或上下文。",
 				stats: "运行统计",
@@ -32,6 +36,14 @@ window.__ModuleLoader__.load({
 				hotTokenLimitHelp: "会话启动注入记忆快照的 token 预算（默认 5000）",
 				maxQueryResults: "查询上限",
 				maxQueryResultsHelp: "一次查询最多返回的条目数（默认 20）",
+				fallback: "审批降级策略",
+				fallbackHelp: "审批不可用（策略 never/服务缺失）时：自动保存并审计标记，或拒绝写入（默认自动）",
+				fallbackAuto: "自动保存（推荐）",
+				fallbackDeny: "拒绝写入",
+				autoDreamDays: "自动代谢周期（天，0=关闭）",
+				autoDreamDaysHelp: "启动时距上次代谢超过此天数自动执行 dream（默认 7）",
+				autoReflectDays: "自动反思周期（天，0=关闭）",
+				autoReflectDaysHelp: "启动时距上次反思超过此天数自动执行（默认 3）",
 				reset: "恢复默认",
 				resetConfirm: "确定恢复全部默认设置？",
 				petEndpoint: "本地通知服务 URL（可选，可为空）",
@@ -57,6 +69,29 @@ window.__ModuleLoader__.load({
 				auditLoading: "读取中…",
 				auditFailed: "审计读取失败",
 				noAudit: "（暂无审计记录）",
+				search: "搜索记忆（语义召回）…",
+				searchBtn: "搜索",
+				allLayers: "全部分层",
+				noEntries: "（无匹配记忆）",
+				entriesLoading: "读取知识库…",
+				entriesFailed: "知识库读取失败",
+				pin: "锁定",
+				unpin: "解锁",
+				remove: "删除",
+				removeConfirm: "确定删除这条记忆？会自动备份，可回滚。",
+				weight: "权重",
+				hits: "引用",
+				reflectRun: "执行深度反思",
+				reflectPreview: "预览 (dry-run)",
+				reflectRunning: "反思中…",
+				reflectFailed: "反思失败",
+				clustersTitle: "主题聚类",
+				conflictsTitle: "潜在冲突",
+				forgetTitle: "遗忘候选",
+				reportFile: "报告",
+				previewOnly: "（预览不落盘）",
+				noClusters: "（暂无相似记忆聚类）",
+				none: "（无）",
 				ops: {
 					decay: "衰减",
 					consolidate: "巩固",
@@ -73,6 +108,9 @@ window.__ModuleLoader__.load({
 			en: {
 				tab: "Memory",
 				title: "Memory system",
+				tabSettings: "Settings",
+				tabKnowledge: "Knowledge",
+				tabReflect: "Reflect",
 				loading: "Reading status…",
 				unavailable: "Runtime status is temporarily unavailable. Memory never removes existing tools or context.",
 				stats: "Statistics",
@@ -94,6 +132,14 @@ window.__ModuleLoader__.load({
 				hotTokenLimitHelp: "Token budget for the session snapshot injection (default 5000)",
 				maxQueryResults: "Max query results",
 				maxQueryResultsHelp: "Max entries returned per query (default 20)",
+				fallback: "Approval fallback",
+				fallbackHelp: "When approval is unavailable (policy never / missing service): auto-save with audit marker, or deny writes (default auto)",
+				fallbackAuto: "Auto-save (recommended)",
+				fallbackDeny: "Deny writes",
+				autoDreamDays: "Auto-dream interval (days, 0=off)",
+				autoDreamDaysHelp: "Run dream at startup if older than this (default 7)",
+				autoReflectDays: "Auto-reflect interval (days, 0=off)",
+				autoReflectDaysHelp: "Run reflection at startup if older than this (default 3)",
 				reset: "Reset to defaults",
 				resetConfirm: "Reset all settings to defaults?",
 				petEndpoint: "Local notify service URL (optional, may be empty)",
@@ -119,6 +165,29 @@ window.__ModuleLoader__.load({
 				auditLoading: "Loading…",
 				auditFailed: "Audit failed",
 				noAudit: "(no audit entries)",
+				search: "Search memory (semantic recall)…",
+				searchBtn: "Search",
+				allLayers: "All layers",
+				noEntries: "(no matching entries)",
+				entriesLoading: "Loading knowledge base…",
+				entriesFailed: "Failed to load knowledge base",
+				pin: "Pin",
+				unpin: "Unpin",
+				remove: "Remove",
+				removeConfirm: "Remove this entry? A backup is made first and it can be restored.",
+				weight: "weight",
+				hits: "hits",
+				reflectRun: "Run deep reflection",
+				reflectPreview: "Preview (dry-run)",
+				reflectRunning: "Reflecting…",
+				reflectFailed: "Reflection failed",
+				clustersTitle: "Topic clusters",
+				conflictsTitle: "Potential conflicts",
+				forgetTitle: "Forget candidates",
+				reportFile: "Report",
+				previewOnly: "(preview, not written)",
+				noClusters: "(no similar-entry clusters)",
+				none: "(none)",
 				ops: {
 					decay: "decay",
 					consolidate: "consolidate",
@@ -138,47 +207,62 @@ window.__ModuleLoader__.load({
 			return primary === "zh-cn" || primary.startsWith("zh-hans") ? copy["zh-CN"] : copy.en;
 		}
 		const inject = ["slots"];
-		// 注意：--dsw-alias-* 变量在部分环境未定义，必须全部带 fallback（参照 dshmarket 写法）
+		// 布局样式：颜色一律走 --dsw-alias-* 令牌（带 fallback），组件本体交给 primitives
 		const styles = `
-.bm-page{display:flex;flex-direction:column;gap:12px;max-width:720px;color:var(--dsw-alias-label-primary,#1f2328);font-size:14px;line-height:1.6}
+.bm-page{display:flex;flex-direction:column;gap:14px;max-width:760px;color:var(--dsw-alias-label-primary,#1f2328);font-size:14px;line-height:1.6}
 .bm-page h3{margin:0;font-size:18px;font-weight:600}
-.bm-page h4{margin:0 0 10px;font-size:14px;font-weight:600}
-.bm-status{padding:10px 12px;border:1px solid var(--dsw-alias-border-l2,#d0d7de);border-radius:10px;background:var(--dsw-alias-bg-layer-3,#f6f8fa)}
-.bm-status.error{color:var(--dsw-alias-label-tertiary,#6e7781)}
-.bm-block{padding:12px;border:1px solid var(--dsw-alias-border-l2,#d0d7de);border-radius:12px;background:var(--dsw-alias-bg-layer-3,#fff)}
+.bm-page h4{margin:0;font-size:14px;font-weight:600}
+.bm-tabs{display:flex;gap:2px;border-bottom:1px solid var(--dsw-alias-border-l2,#d0d7de);padding-bottom:8px}
+.bm-tab{padding:6px 14px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--dsw-alias-label-secondary,#57606a);font-size:13px;cursor:pointer}
+.bm-tab:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(65,118,230,.08))}
+.bm-tab.active{background:var(--dsw-alias-bg-layer-3,#f6f8fa);border-color:var(--dsw-alias-border-l2,#d0d7de);color:var(--dsw-alias-label-primary,#1f2328);font-weight:600}
+.bm-block{padding:14px;border:1px solid var(--dsw-alias-border-l2,#d0d7de);border-radius:12px;background:var(--dsw-alias-bg-layer-3,#fff);display:flex;flex-direction:column;gap:12px}
 .bm-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
 .bm-card{padding:10px 12px;border:1px solid var(--dsw-alias-border-l2,#d0d7de);border-radius:10px;background:var(--dsw-alias-bg-layer-2,#f6f8fa)}
 .bm-card strong{display:block;margin-bottom:2px;font-weight:600;font-size:16px;color:var(--dsw-alias-label-primary,#1f2328)}
 .bm-card span{color:var(--dsw-alias-label-secondary,#57606a);font-size:13px}
-.bm-root{margin-top:8px;color:var(--dsw-alias-label-tertiary,#6e7781);font-size:13px;word-break:break-all}
-.bm-config{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px}
+.bm-root{color:var(--dsw-alias-label-tertiary,#6e7781);font-size:13px;word-break:break-all}
+.bm-config{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
 .bm-field{display:flex;flex-direction:column;gap:4px;min-width:0}
 .bm-field label{color:var(--dsw-alias-label-primary,#1f2328);font-size:13px;font-weight:500}
-.bm-field input[type=number],.bm-field input[type=text]{height:30px;padding:0 8px;border:1px solid var(--dsw-alias-border-l2,#d0d7de);border-radius:8px;background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-primary,#1f2328);font-size:13px;min-width:0}
-.bm-field input:focus{outline:none;border-color:#4176e6}
+.bm-field input[type=number],.bm-field select{height:32px;padding:0 8px;border:1px solid var(--dsw-alias-border-l2,#d0d7de);border-radius:8px;background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-primary,#1f2328);font-size:13px;min-width:0}
+.bm-field input:focus,.bm-field select:focus{outline:none;border-color:#4176e6}
 .bm-wide{grid-column:1/-1}
-.bm-actions{display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap}
-.bm-btn{padding:6px 14px;border:1px solid var(--dsw-alias-border-l2,#d0d7de);border-radius:8px;background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-primary,#1f2328);font-size:13px;cursor:pointer}
-.bm-btn:hover{border-color:#4176e6}
-.bm-btn.primary{background:#4176e6;border-color:#4176e6;color:#fff}
-.bm-btn.primary:hover{background:#3158c8;border-color:#3158c8}
-.bm-btn:disabled{opacity:.5;cursor:default}
+.bm-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .bm-note{color:var(--dsw-alias-label-secondary,#57606a);font-size:13px}
 .bm-ok{color:#1a7f37}
 .bm-err{color:#cf222e}
-.bm-list{margin:10px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:4px;max-height:280px;overflow:auto}
-.bm-list li{padding:5px 8px;border-radius:6px;background:var(--dsw-alias-bg-layer-2,#f6f8fa);color:var(--dsw-alias-label-primary,#1f2328);font-family:ui-monospace,Consolas,monospace;font-size:13px;word-break:break-all}
-.bm-summary{margin-top:10px;font-weight:600;color:var(--dsw-alias-label-primary,#1f2328)}
+.bm-list{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:4px;max-height:280px;overflow:auto}
+.bm-list li{padding:5px 8px;border-radius:6px;background:var(--dsw-alias-bg-layer-2,#f6f8fa);color:var(--dsw-alias-label-primary,#1f2328);font-family:ui-monospace,Consolas,monospace;font-size:12.5px;word-break:break-all}
+.bm-summary{font-weight:600;color:var(--dsw-alias-label-primary,#1f2328)}
+.bm-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.bm-toolbar select{height:32px;padding:0 8px;border:1px solid var(--dsw-alias-border-l2,#d0d7de);border-radius:8px;background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-primary,#1f2328);font-size:13px}
+.bm-entries{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px;max-height:520px;overflow:auto}
+.bm-entry{padding:10px 12px;border:1px solid var(--dsw-alias-border-l2,#d0d7de);border-radius:10px;background:var(--dsw-alias-bg-layer-2,#f6f8fa)}
+.bm-entry.pinned{border-color:#c5a468}
+.bm-entry-text{color:var(--dsw-alias-label-primary,#1f2328);font-size:13px;word-break:break-all}
+.bm-entry-meta{display:flex;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap;color:var(--dsw-alias-label-tertiary,#6e7781);font-size:12px;font-family:ui-monospace,Consolas,monospace}
+.bm-entry-ops{display:flex;gap:6px;margin-left:auto;align-items:center}
+.bm-cluster{margin:0;padding:10px 12px;border:1px solid var(--dsw-alias-border-l2,#d0d7de);border-radius:10px;background:var(--dsw-alias-bg-layer-2,#f6f8fa)}
+.bm-cluster-title{font-weight:600;color:var(--dsw-alias-label-primary,#1f2328);font-size:13px;margin-bottom:4px}
+.bm-cluster ul{margin:0;padding-left:18px;color:var(--dsw-alias-label-secondary,#57606a);font-size:13px}
 `;
-		const CONFIG_KEYS = ["halfLifeDays", "decayThreshold", "consolidateThreshold", "weightCap", "hotTokenLimit", "maxQueryResults"];
+		const CONFIG_KEYS = ["halfLifeDays", "decayThreshold", "consolidateThreshold", "weightCap", "hotTokenLimit", "maxQueryResults", "autoDreamDays", "autoReflectDays"];
+		const { Button, Input, StateDot, IconSearchOutline16, IconTrashOutline16, IconRefreshOutline14, IconCheckOutline16, IconWarningOutline16, IconThinkOutline14, IconSettingsOutline16, IconLinkOutline14, IconBrowseOutline16 } = prim;
 		function BiomemorySettingsPage() {
 			const t = text();
 			const [status, setStatus] = react.useState({ kind: "loading" });
 			const [configText, setConfigText] = react.useState({});
 			const [petEndpoint, setPetEndpoint] = react.useState("");
+			const [fallback, setFallback] = react.useState("auto");
 			const [saveState, setSaveState] = react.useState(null);
 			const [dream, setDream] = react.useState(null);
 			const [audit, setAudit] = react.useState(null);
+			const [tab, setTab] = react.useState("settings");
+			const [searchText, setSearchText] = react.useState("");
+			const [layerSel, setLayerSel] = react.useState("");
+			const [knowledge, setKnowledge] = react.useState({ kind: "idle", entries: [] });
+			const [reflect, setReflect] = react.useState(null);
 			const loadStatus = react.useCallback(() => {
 				const controller = new AbortController();
 				fetch("/biomemory/api/status", {
@@ -195,6 +279,7 @@ window.__ModuleLoader__.load({
 					}
 					setConfigText(textForm);
 					setPetEndpoint(data.petEndpoint || "");
+					setFallback(data.config?.approvalFallback || "auto");
 					setStatus({ kind: "ready", value: data });
 				}).catch((error) => {
 					if (!(error instanceof DOMException && error.name === "AbortError")) setStatus({ kind: "error" });
@@ -212,6 +297,7 @@ window.__ModuleLoader__.load({
 					if (value !== void 0 && value !== "") body[key] = Number(value);
 				}
 				body.petEndpoint = petEndpoint.trim() !== "" ? petEndpoint.trim() : null;
+				body.approvalFallback = fallback === "deny" ? "deny" : "auto";
 				fetch("/biomemory/api/config", {
 					method: "POST",
 					credentials: "same-origin",
@@ -241,6 +327,7 @@ window.__ModuleLoader__.load({
 					const data = await response.json();
 					if (!data?.ok) throw new Error("reset failed");
 					setPetEndpoint(data.petEndpoint || "");
+					setFallback(data.config?.approvalFallback || "auto");
 					const textForm = {};
 					for (const key of CONFIG_KEYS) textForm[key] = data.config[key] !== void 0 ? String(data.config[key]) : "";
 					setConfigText(textForm);
@@ -280,13 +367,60 @@ window.__ModuleLoader__.load({
 					setAudit({ kind: "error" });
 				});
 			};
+			const loadEntries = (q, layer) => {
+				const query = q !== void 0 ? q : searchText;
+				const lay = layer !== void 0 ? layer : layerSel;
+				setKnowledge({ kind: "loading", entries: [] });
+				const params = new URLSearchParams();
+				if (query) params.set("q", query);
+				if (lay) params.set("layer", lay);
+				fetch(`/biomemory/api/entries?${params.toString()}`, {
+					credentials: "same-origin"
+				}).then(async (response) => {
+					if (!response.ok) throw new Error("entries failed");
+					const data = await response.json();
+					if (!data?.ok) throw new Error("entries failed");
+					setKnowledge({ kind: "ready", entries: data.entries || [] });
+				}).catch(() => {
+					setKnowledge({ kind: "error", entries: [] });
+				});
+			};
+			const entryOp = (fp, op) => {
+				fetch(`/biomemory/api/entries/${op}`, {
+					method: "POST",
+					credentials: "same-origin",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ fp })
+				}).then(async (response) => {
+					if (!response.ok) throw new Error(`${op} failed`);
+					const data = await response.json();
+					if (!data?.ok) throw new Error(`${op} failed`);
+					loadEntries();
+				}).catch(() => { /* 保持现状 */ });
+			};
+			const runReflect = (dryRun) => {
+				setReflect({ kind: "running", dryRun });
+				fetch("/biomemory/api/reflect", {
+					method: "POST",
+					credentials: "same-origin",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ dryRun })
+				}).then(async (response) => {
+					if (!response.ok) throw new Error("reflect failed");
+					const data = await response.json();
+					if (!data?.ok) throw new Error("reflect failed");
+					setReflect({ kind: "done", dryRun, report: data.report || {} });
+				}).catch(() => {
+					setReflect({ kind: "error", dryRun });
+				});
+			};
 			const opName = (op) => t.ops[op] || op;
 			const layerName = (layer) => t.layers[layer] || layer;
 			if (status.kind === "loading") {
-				return (0, react.createElement)("div", { className: "bm-page" }, (0, react.createElement)("style", null, styles), (0, react.createElement)("h3", null, t.title), (0, react.createElement)("div", { className: "bm-status" }, t.loading));
+				return (0, react.createElement)("div", { className: "bm-page" }, (0, react.createElement)("style", null, styles), (0, react.createElement)("h3", null, t.title), (0, react.createElement)("div", { className: "bm-note" }, t.loading));
 			}
 			if (status.kind === "error") {
-				return (0, react.createElement)("div", { className: "bm-page" }, (0, react.createElement)("style", null, styles), (0, react.createElement)("h3", null, t.title), (0, react.createElement)("div", { className: "bm-status error" }, t.unavailable));
+				return (0, react.createElement)("div", { className: "bm-page" }, (0, react.createElement)("style", null, styles), (0, react.createElement)("h3", null, t.title), (0, react.createElement)("div", { className: "bm-note" }, t.unavailable));
 			}
 			const stats = status.value.stats || {};
 			const layers = stats.layers || {};
@@ -309,7 +443,9 @@ window.__ModuleLoader__.load({
 					consolidateThreshold: t.consolidateThreshold,
 					weightCap: t.weightCap,
 					hotTokenLimit: t.hotTokenLimit,
-					maxQueryResults: t.maxQueryResults
+					maxQueryResults: t.maxQueryResults,
+					autoDreamDays: t.autoDreamDays,
+					autoReflectDays: t.autoReflectDays
 				};
 				const helps = {
 					halfLifeDays: t.halfLifeDaysHelp,
@@ -317,7 +453,9 @@ window.__ModuleLoader__.load({
 					consolidateThreshold: t.consolidateThresholdHelp,
 					weightCap: t.weightCapHelp,
 					hotTokenLimit: t.hotTokenLimitHelp,
-					maxQueryResults: t.maxQueryResultsHelp
+					maxQueryResults: t.maxQueryResultsHelp,
+					autoDreamDays: t.autoDreamDaysHelp,
+					autoReflectDays: t.autoReflectDaysHelp
 				};
 				return (0, react.createElement)("div", {
 					key,
@@ -331,14 +469,14 @@ window.__ModuleLoader__.load({
 			const dreamSection = (() => {
 				if (dream === null) return null;
 				if (dream.kind === "running") {
-					return (0, react.createElement)("div", { className: "bm-status" }, t.dreamRunning);
+					return (0, react.createElement)("div", { className: "bm-note" }, t.dreamRunning);
 				}
 				if (dream.kind === "error") {
-					return (0, react.createElement)("div", { className: "bm-status error" }, `${t.dreamFailed}${dream.dryRun ? " (dry-run)" : ""}`);
+					return (0, react.createElement)("div", { className: "bm-err" }, `${t.dreamFailed}${dream.dryRun ? " (dry-run)" : ""}`);
 				}
 				const r = dream.report || {};
 				const items = (r.items || []).slice(0, 20);
-				return (0, react.createElement)("div", null, (0, react.createElement)("div", { className: "bm-summary" }, `${t.scanned} ${r.scanned}：${t.decayed} ${r.decayed} · ${t.consolidated} ${r.consolidated} · ${t.conflicted} ${r.conflicted} · ${t.archived} ${r.archived}`), r.backup ? (0, react.createElement)("div", { className: "bm-root" }, `${t.backup}：${r.backup}`) : null, items.length === 0 ? (0, react.createElement)("div", { className: "bm-note" }, t.noItems) : (0, react.createElement)("ul", { className: "bm-list" }, items.map((item, index) => {
+				return (0, react.createElement)("div", { className: "bm-actions", style: { flexDirection: "column", alignItems: "stretch", gap: 8 } }, (0, react.createElement)("div", { className: "bm-summary" }, `${t.scanned} ${r.scanned}：${t.decayed} ${r.decayed} · ${t.consolidated} ${r.consolidated} · ${t.conflicted} ${r.conflicted} · ${t.archived} ${r.archived}`), r.backup ? (0, react.createElement)("div", { className: "bm-root" }, `${t.backup}：${r.backup}`) : null, items.length === 0 ? (0, react.createElement)("div", { className: "bm-note" }, t.noItems) : (0, react.createElement)("ul", { className: "bm-list" }, items.map((item, index) => {
 					const to = item.to ? ` → ${item.to}` : "";
 					return (0, react.createElement)("li", { key: index }, `${opName(item.op)} [${item.layer}] ${item.fp}${to}`);
 				})));
@@ -346,10 +484,10 @@ window.__ModuleLoader__.load({
 			const auditSection = (() => {
 				if (audit === null) return null;
 				if (audit.kind === "loading") {
-					return (0, react.createElement)("div", { className: "bm-status" }, t.auditLoading);
+					return (0, react.createElement)("div", { className: "bm-note" }, t.auditLoading);
 				}
 				if (audit.kind === "error") {
-					return (0, react.createElement)("div", { className: "bm-status error" }, t.auditFailed);
+					return (0, react.createElement)("div", { className: "bm-err" }, t.auditFailed);
 				}
 				const entries = (audit.entries || []).slice(0, 20);
 				if (entries.length === 0) {
@@ -358,32 +496,114 @@ window.__ModuleLoader__.load({
 				return (0, react.createElement)("ul", { className: "bm-list" }, entries.map((entry, index) => (0, react.createElement)("li", { key: index }, `${(entry.t || "").slice(0, 16)} ${entry.event || ""} ${entry.fp || ""} ${entry.text || ""}`)));
 			})();
 			const saveNote = saveState === null ? null : saveState.kind === "saving" ? (0, react.createElement)("span", { className: "bm-note" }, t.saving) : saveState.kind === "ok" ? (0, react.createElement)("span", { className: "bm-ok" }, t.saved) : (0, react.createElement)("span", { className: "bm-err" }, t.saveFailed);
-			return (0, react.createElement)("div", { className: "bm-page" }, (0, react.createElement)("style", null, styles), (0, react.createElement)("h3", null, t.title), (0, react.createElement)("section", { className: "bm-block" }, (0, react.createElement)("h4", null, t.stats), (0, react.createElement)("div", { className: "bm-grid" }, ...summaryCards, ...layerCards), (0, react.createElement)("div", { className: "bm-root" }, `${t.memoryRoot}：${stats.memoryRoot || ""}`)), (0, react.createElement)("section", { className: "bm-block" }, (0, react.createElement)("h4", null, t.config), (0, react.createElement)("div", { className: "bm-config" }, ...configFields, (0, react.createElement)("div", { className: "bm-field bm-wide" }, (0, react.createElement)("label", null, t.petEndpoint), (0, react.createElement)("input", {
+			const settingsSection = (0, react.createElement)(react.Fragment, null, (0, react.createElement)("section", { className: "bm-block" }, (0, react.createElement)("h4", null, t.stats), (0, react.createElement)("div", { className: "bm-grid" }, ...summaryCards, ...layerCards), (0, react.createElement)("div", { className: "bm-root" }, `${t.memoryRoot}：${stats.memoryRoot || ""}`)), (0, react.createElement)("section", { className: "bm-block" }, (0, react.createElement)("h4", null, t.config), (0, react.createElement)("div", { className: "bm-config" }, ...configFields, (0, react.createElement)("div", { className: "bm-field bm-wide" }, (0, react.createElement)("label", null, t.fallback), (0, react.createElement)("select", { value: fallback, onChange: (event) => setFallback(event.target.value) }, (0, react.createElement)("option", { value: "auto" }, t.fallbackAuto), (0, react.createElement)("option", { value: "deny" }, t.fallbackDeny)), (0, react.createElement)("span", { className: "bm-note" }, t.fallbackHelp)), (0, react.createElement)("div", { className: "bm-field bm-wide" }, (0, react.createElement)("label", null, t.petEndpoint), (0, react.createElement)(Input, {
+				icon: (0, react.createElement)(IconLinkOutline14, { size: 14 }),
 				type: "text",
 				value: petEndpoint,
 				placeholder: "https://example.com/notify",
-				onChange: (event) => setPetEndpoint(event.target.value)
-			}), (0, react.createElement)("span", { className: "bm-note" }, t.petEndpointHelp))), (0, react.createElement)("div", { className: "bm-actions" }, (0, react.createElement)("button", {
-				className: "bm-btn primary",
+				onChange: (event) => setPetEndpoint(event.target.value),
+				style: { width: "100%" }
+			}), (0, react.createElement)("span", { className: "bm-note" }, t.petEndpointHelp))), (0, react.createElement)("div", { className: "bm-actions" }, (0, react.createElement)(Button, {
+				variant: "primary",
 				disabled: saveState !== null && saveState.kind === "saving",
 				onClick: saveConfig
-			}, t.save), (0, react.createElement)("button", {
-				className: "bm-btn",
+			}, t.save), (0, react.createElement)(Button, {
+				variant: "outline",
 				disabled: saveState !== null && saveState.kind === "saving",
 				onClick: resetConfig
-			}, t.reset), saveNote)), (0, react.createElement)("section", { className: "bm-block" }, (0, react.createElement)("h4", null, t.dream), (0, react.createElement)("div", { className: "bm-actions" }, (0, react.createElement)("button", {
-				className: "bm-btn primary",
+			}, t.reset), saveNote)), (0, react.createElement)("section", { className: "bm-block" }, (0, react.createElement)("h4", null, t.dream), (0, react.createElement)("div", { className: "bm-actions" }, (0, react.createElement)(Button, {
+				variant: "primary",
 				disabled: dream !== null && dream.kind === "running",
 				onClick: () => runDream(false)
-			}, t.runDream), (0, react.createElement)("button", {
-				className: "bm-btn",
+			}, t.runDream), (0, react.createElement)(Button, {
+				variant: "outline",
 				disabled: dream !== null && dream.kind === "running",
 				onClick: () => runDream(true)
-			}, t.previewDream)), dreamSection), (0, react.createElement)("section", { className: "bm-block" }, (0, react.createElement)("h4", null, t.audit), (0, react.createElement)("div", { className: "bm-actions" }, (0, react.createElement)("button", {
-				className: "bm-btn",
+			}, t.previewDream)), dreamSection), (0, react.createElement)("section", { className: "bm-block" }, (0, react.createElement)("h4", null, t.audit), (0, react.createElement)("div", { className: "bm-actions" }, (0, react.createElement)(Button, {
+				variant: "outline",
 				disabled: audit !== null && audit.kind === "loading",
 				onClick: runAudit
-			}, t.runAudit)), auditSection));
+			}, (0, react.createElement)(IconRefreshOutline14, { size: 14 }), " ", t.runAudit)), auditSection));
+			const layerOptions = Object.keys(layers).sort().map((layer) => (0, react.createElement)("option", { key: layer, value: layer }, layerName(layer)));
+			const knowledgeBody = (() => {
+				if (knowledge.kind === "loading") {
+					return (0, react.createElement)("div", { className: "bm-note" }, t.entriesLoading);
+				}
+				if (knowledge.kind === "error") {
+					return (0, react.createElement)("div", { className: "bm-err" }, t.entriesFailed);
+				}
+				if (knowledge.kind === "idle" || knowledge.entries.length === 0) {
+					return (0, react.createElement)("div", { className: "bm-note" }, t.noEntries);
+				}
+				return (0, react.createElement)("ul", { className: "bm-entries" }, knowledge.entries.map((entry) => (0, react.createElement)("li", {
+					key: entry.fp,
+					className: entry.pinned ? "bm-entry pinned" : "bm-entry"
+				}, (0, react.createElement)("div", { className: "bm-entry-text" }, entry.text), (0, react.createElement)("div", { className: "bm-entry-meta" }, (0, react.createElement)("span", null, `[${layerName(entry.layer)}]`), entry.pinned ? (0, react.createElement)("span", { className: "bm-ok" }, "PIN") : null, entry.mode ? (0, react.createElement)("span", null, entry.mode) : null, (0, react.createElement)("span", null, `${t.weight} ${entry.weight}`), (0, react.createElement)("span", null, `${t.hits} ${entry.hits}`), entry.ts ? (0, react.createElement)("span", null, entry.ts) : null, (0, react.createElement)("span", { className: "bm-entry-ops" }, (0, react.createElement)(Button, {
+					variant: "ghost",
+					size: "sm",
+					onClick: () => entryOp(entry.fp, entry.pinned ? "unpin" : "pin")
+				}, entry.pinned ? t.unpin : t.pin), (0, react.createElement)(Button, {
+					variant: "ghost",
+					size: "sm",
+					onClick: () => {
+						if (window.confirm(`${t.removeConfirm}\n\n${entry.text.slice(0, 80)}`)) entryOp(entry.fp, "remove");
+					}
+				}, (0, react.createElement)(IconTrashOutline16, { size: 14 }), " ", t.remove))))));
+			})();
+			const knowledgeSection = (0, react.createElement)("section", { className: "bm-block" }, (0, react.createElement)("h4", null, (0, react.createElement)(IconBrowseOutline16, { size: 14 }), " ", t.tabKnowledge), (0, react.createElement)("div", { className: "bm-toolbar" }, (0, react.createElement)(Input, {
+				icon: (0, react.createElement)(IconSearchOutline16, { size: 14 }),
+				type: "text",
+				placeholder: t.search,
+				value: searchText,
+				onChange: (event) => setSearchText(event.target.value),
+				onKeyDown: (event) => {
+					if (event.key === "Enter") loadEntries();
+				},
+				style: { flex: 1, minWidth: 180 }
+			}), (0, react.createElement)("select", {
+				value: layerSel,
+				onChange: (event) => setLayerSel(event.target.value)
+			}, (0, react.createElement)("option", { value: "" }, t.allLayers), ...layerOptions), (0, react.createElement)(Button, {
+				variant: "primary",
+				onClick: () => loadEntries()
+			}, t.searchBtn)), knowledgeBody);
+			const reflectBody = (() => {
+				if (reflect === null) {
+					return (0, react.createElement)("div", { className: "bm-note" }, t.reflectRun);
+				}
+				if (reflect.kind === "running") {
+					return (0, react.createElement)("div", { className: "bm-note" }, t.reflectRunning);
+				}
+				if (reflect.kind === "error") {
+					return (0, react.createElement)("div", { className: "bm-err" }, t.reflectFailed);
+				}
+				const r = reflect.report || {};
+				const clusters = r.clusters || [];
+				const conflicts = r.conflicts || [];
+				const forget = r.forget || [];
+				const summary = `${t.scanned} ${r.scanned}：${t.clustersTitle} ${clusters.length} · ${t.conflictsTitle} ${conflicts.length} · ${t.forgetTitle} ${forget.length} · 近 7 天写入 ${r.recent7}（上周 ${r.prev7}）`;
+				const clusterNodes = clusters.map((c, index) => (0, react.createElement)("div", {
+					key: index,
+					className: "bm-cluster"
+				}, (0, react.createElement)("div", { className: "bm-cluster-title" }, `${t.clustersTitle} ${index + 1}（${c.size} 条）`), (0, react.createElement)("ul", null, c.members.map((m, mi) => (0, react.createElement)("li", { key: mi }, `[${layerName(m.layer)}] ${m.text}`)))));
+				const conflictNodes = conflicts.length ? (0, react.createElement)("ul", { className: "bm-list" }, conflicts.map((c, index) => (0, react.createElement)("li", { key: index }, `[${layerName(c.layer)}] ${c.text}`))) : (0, react.createElement)("div", { className: "bm-note" }, t.none);
+				const forgetNodes = forget.length ? (0, react.createElement)("ul", { className: "bm-list" }, forget.map((f, index) => (0, react.createElement)("li", { key: index }, `[${layerName(f.layer)}] [w:${f.weight}] ${f.text}`))) : (0, react.createElement)("div", { className: "bm-note" }, t.none);
+				return (0, react.createElement)("div", { className: "bm-actions", style: { flexDirection: "column", alignItems: "stretch", gap: 8 } }, (0, react.createElement)("div", { className: "bm-summary" }, summary), (0, react.createElement)("div", { className: "bm-root" }, r.reportFile ? `${t.reportFile}：${r.reportFile}` : t.previewOnly), (0, react.createElement)("h4", null, t.clustersTitle), clusters.length ? clusterNodes : (0, react.createElement)("div", { className: "bm-note" }, t.noClusters), (0, react.createElement)("h4", null, t.conflictsTitle), conflictNodes, (0, react.createElement)("h4", null, t.forgetTitle), forgetNodes);
+			})();
+			const reflectSection = (0, react.createElement)("section", { className: "bm-block" }, (0, react.createElement)("h4", null, (0, react.createElement)(IconThinkOutline14, { size: 14 }), " ", t.tabReflect), (0, react.createElement)("div", { className: "bm-actions" }, (0, react.createElement)(Button, {
+				variant: "primary",
+				disabled: reflect !== null && reflect.kind === "running",
+				onClick: () => runReflect(false)
+			}, t.reflectRun), (0, react.createElement)(Button, {
+				variant: "outline",
+				disabled: reflect !== null && reflect.kind === "running",
+				onClick: () => runReflect(true)
+			}, t.reflectPreview)), reflectBody);
+			const tabBtn = (id, label, icon) => (0, react.createElement)("button", {
+				className: tab === id ? "bm-tab active" : "bm-tab",
+				onClick: () => setTab(id)
+			}, icon ? (0, react.createElement)(react.Fragment, null, icon, " ") : null, label);
+			return (0, react.createElement)("div", { className: "bm-page" }, (0, react.createElement)("style", null, styles), (0, react.createElement)("h3", null, t.title), (0, react.createElement)("div", { className: "bm-tabs" }, tabBtn("settings", t.tabSettings, (0, react.createElement)(IconSettingsOutline16, { size: 14 })), tabBtn("knowledge", t.tabKnowledge, (0, react.createElement)(IconBrowseOutline16, { size: 14 })), tabBtn("reflect", t.tabReflect, (0, react.createElement)(IconThinkOutline14, { size: 14 }))), tab === "settings" ? settingsSection : tab === "knowledge" ? knowledgeSection : reflectSection);
 		}
 		function apply(ctx) {
 			ctx.effect(() => ctx.slots.inject("settings.section", () => ctx.slots.register({

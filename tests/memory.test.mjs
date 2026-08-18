@@ -396,3 +396,112 @@ test('setConfig/getConfig：配置可覆盖并回读', () => {
   I.setConfig({}) // 还原默认
   assert.equal(I.getConfig().halfLifeDays, 7)
 })
+
+// ============================================================================
+// 15. clusterEntries —— 深度反思主题聚类
+// ============================================================================
+
+test('clusterEntries：相似记忆聚为一簇，无关记忆不聚类', () => {
+  const entries = [
+    { fp: 'a1', text: '智能宠物启动成功，3199 端口监听正常' },
+    { fp: 'a2', text: '智能宠物启动失败，端口 3199 被占用' },
+    { fp: 'b1', text: '时叙 v5.0.5 最终版已发布到微信' },
+    { fp: 'b2', text: '时叙 v5.0.5 发布前需要重新构建 APK 签名' },
+    { fp: 'c1', text: '今天天气很好适合散步' },
+  ]
+  const clusters = I.clusterEntries(entries)
+  assert.ok(clusters.length >= 2, '应至少聚出 2 簇（宠物/时叙）')
+  const sizes = clusters.map((c) => c.members.length)
+  assert.ok(sizes.every((s) => s >= 2), '每簇至少 2 条')
+  const allFp = clusters.flatMap((c) => c.members.map((m) => m.fp))
+  assert.ok(allFp.includes('a1') && allFp.includes('a2'), '宠物两条应被聚类')
+  assert.ok(allFp.includes('b1') && allFp.includes('b2'), '时叙两条应被聚类')
+  assert.ok(!allFp.includes('c1'), '无关记忆不应进任何簇')
+})
+
+// ============================================================================
+// 16. runReflect —— 深度反思报告
+// ============================================================================
+
+test('runReflect dry-run：返回结构化报告且不落盘', () => {
+  writeMemFile('hot/knowledge.md', [
+    '## 2026-08-18 · 会话 t1',
+    '- [知识|自动] [fp:k1] [w:10] [h:2] [t:2026-08-18 10:00] 智能宠物启动成功监听 3199',
+    '- [知识|自动] [fp:k2] [w:12] [h:5] [t:2026-08-18 09:00] 时叙 v5.0.5 已发布最终版',
+  ].join('\n') + '\n')
+  writeMemFile('hot/behavior.md', [
+    '## 2026-08-18 · 会话 t1',
+    '- [行为|自动] [fp:b1] [w:8] [h:1] [t:2026-08-18 11:00] 智能宠物 3199 端口未监听导致启动失败',
+  ].join('\n') + '\n')
+  writeMemFile('preferences.md', [
+    '- [2026-08-15] 宠物正式名称为深海',
+  ].join('\n') + '\n')
+  const r = I.runReflect({ dryRun: true })
+  assert.equal(r.dryRun, true)
+  assert.ok(r.scanned >= 3, '扫描到全部条目')
+  assert.ok(Array.isArray(r.clusters), 'clusters 为数组')
+  assert.ok(Array.isArray(r.conflicts), 'conflicts 为数组')
+  assert.ok(Array.isArray(r.forget), 'forget 为数组')
+  assert.equal(r.reportFile, null, 'dry-run 不落盘')
+  assert.ok(typeof r.recent7 === 'number' && typeof r.prev7 === 'number')
+  assert.ok(r.clusters.some((c) => c.members.some((m) => m.text.includes('宠物'))), '宠物主题应被聚类')
+})
+
+test('runReflect 落盘：报告写入 longterm/reflections/ 且 latestReflection 可找到', () => {
+  const r = I.runReflect({})
+  assert.ok(r.reportFile, '应返回报告路径')
+  assert.ok(r.reportFile.includes('reflections'), '报告位于 reflections 目录')
+  assert.ok(fs.existsSync(r.reportFile), '报告文件已创建')
+  assert.ok(fs.existsSync(path.join(tmpDir, 'longterm', 'reflections')), 'reflections 目录存在')
+  assert.ok(fs.readdirSync(path.join(tmpDir, 'longterm', 'reflections')).length > 0, '目录非空')
+  const latest = I.latestReflection()
+  assert.ok(latest, 'latestReflection 应能找到报告')
+  assert.equal(latest, r.reportFile, '最新报告即本次写入')
+})
+
+// ============================================================================
+// 17. consolidateHits —— 自动巩固（用进废退）
+// ============================================================================
+
+test('consolidateHits：命中条目 hits+1 并写回，未命中不变', () => {
+  writeMemFile('hot/knowledge.md', [
+    '## 2026-08-18 · 会话 t2',
+    '- [知识|自动] [fp:h1] [w:10] [h:3] [t:2026-08-18 10:00] 巩固测试条目甲',
+    '- [知识|自动] [fp:h2] [w:10] [h:1] [t:2026-08-18 10:00] 巩固测试条目乙',
+  ].join('\n') + '\n')
+  const files = I.consolidateHits(new Set(['h1']))
+  assert.ok(files >= 1, '至少一个文件被写回')
+  const text = readMemFile('hot/knowledge.md')
+  assert.ok(text.includes('[fp:h1] [w:10] [h:4]'), 'h1 引用 +1 → h:4')
+  assert.ok(text.includes('[fp:h2] [w:10] [h:1]'), 'h2 未命中保持不变')
+})
+
+test('queryEntries 带关键词查询自动巩固命中条目', () => {
+  writeMemFile('hot/behavior.md', [
+    '## 2026-08-18 · 会话 t3',
+    '- [行为|自动] [fp:q1] [w:10] [h:0] [t:2026-08-18 10:00] 查询巩固目标记忆',
+    '- [行为|自动] [fp:q2] [w:10] [h:0] [t:2026-08-18 10:00] 无关的另一条',
+  ].join('\n') + '\n')
+  const es = I.queryEntries('查询巩固')
+  assert.ok(es.some((e) => e.fp === 'q1'), '关键词应命中 q1')
+  const text = readMemFile('hot/behavior.md')
+  assert.ok(text.includes('[fp:q1] [w:10] [h:1]'), 'q1 被自动巩固 h:1')
+  assert.ok(text.includes('[fp:q2] [w:10] [h:0]'), 'q2 未被巩固')
+})
+
+// ============================================================================
+// 18. removeEntry —— 安全删除（先备份）
+// ============================================================================
+
+test('removeEntry：删除条目并自动备份主文件', () => {
+  writeMemFile('hot/knowledge.md', [
+    '## 2026-08-18 · 会话 t4',
+    '- [知识|自动] [fp:r1] [w:10] [h:0] [t:2026-08-18 10:00] 待删除记忆条目',
+  ].join('\n') + '\n')
+  const r = I.removeEntry('r1')
+  assert.equal(r.ok, true)
+  assert.ok(r.backup, '应返回备份目录')
+  assert.ok(fs.existsSync(r.backup), '备份目录存在')
+  assert.ok(!readMemFile('hot/knowledge.md').includes('fp:r1'), '条目已删除')
+  assert.ok(I.removeEntry('nope').ok === false, '不存在的 fp 返回失败')
+})
