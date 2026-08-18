@@ -1,7 +1,7 @@
 {
   "name": "dsh-biomemory",
-  "description": "生物仿生记忆系统（Biomimetic Memory for DeepSeek Harness）：纯文件 Markdown 数据层（透明可读改）+ memory 工具 + 冻结快照自动注入 + 分级审批门 + 结构化审计 + 记忆代谢（衰减/巩固/归档）+ 记忆钉 + 语义检索 + /memory 命令 + 跨会话召回",
-  "version": "0.3.0",
+  "description": "生物仿生记忆系统（Biomimetic Memory for DeepSeek Harness）：纯文件 Markdown 数据层 + memory 工具 + 冻结快照注入 + 自动召回/自动保存（审批降级+用进废退）+ 深度反思 + 知识页 + 分级审批 + 结构化审计 + 记忆代谢 + 记忆钉 + 语义检索 + /memory 命令",
+  "version": "0.4.0",
   "type": "module",
   "main": "./index.mjs",
   "exports": {

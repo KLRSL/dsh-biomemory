@@ -76,6 +76,29 @@ Dry-run example output:
 
 **Backup & rollback**: before an actual run, the whole memory store is automatically copied to `backups/<timestamp>/` (including `audit.jsonl`). On startup, the self-check restores the latest backup automatically if a primary memory file is found corrupted. Rollbacks are recorded as `ROLLBACK` audit events.
 
+## Auto recall / auto save (v0.4.0)
+
+Three automatic layers on top of explicit calls:
+
+1. **Approval fallback**: important memories normally require approval; when approval is unavailable (policy `never` / service missing), they are saved automatically per `approvalFallback` (default `auto`), audited as `[降级]`. Switch to `deny` in settings to stay fail-closed.
+2. **Auto consolidation (use-it-or-lose-it)**: every keyword query/recall hit bumps `hits+1` and writes back — memories that get recalled often decay slower (audit `RECALL`).
+3. **Auto dream/reflect**: `autoDreamDays` (default 7) and `autoReflectDays` (default 3) run metabolism/reflection at startup when older than the interval; `0` disables. Audit `AUTO-DREAM` / `AUTO-REFLECT`.
+
+## Deep reflection (Reflect, v0.4.0)
+
+`/memory reflect` (or `memory action=reflect`, settings tab) — a purely local, LLM-free periodic summary:
+
+1. **Topic clustering**: all entries clustered by TF cosine similarity (≥0.25) to surface recurring topics;
+2. **Trend stats**: writes in the last 7 days vs the previous week (rising / steady);
+3. **Conflict alerts**: behavior memories that clash with preferences;
+4. **Forget candidates**: low-weight entries worth reviewing.
+
+Reports are written to `longterm/reflections/<timestamp>.md`; `--dry-run` previews without writing.
+
+## Knowledge page (v0.4.0)
+
+The settings page gains a **Knowledge** tab: full-text/semantic search, layer filter, per-entry weight/hits/time/pin display, one-click pin/unpin and **safe removal** (backed up first, restorable). Web API: `GET /biomemory/api/entries`, `POST /biomemory/api/entries/pin|unpin|remove`, `POST /biomemory/api/reflect`.
+
 ## Memory Pins
 
 Lock a memory so it never participates in decay and always enters the snapshot:
