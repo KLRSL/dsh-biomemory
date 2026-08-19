@@ -1,7 +1,7 @@
 {
   "name": "dsh-biomemory",
-  "description": "生物仿生记忆系统（Biomimetic Memory for DeepSeek Harness）：纯文件 Markdown 数据层 + memory 工具 + 冻结快照注入 + 自动召回/自动保存（审批降级+用进废退）+ 深度反思 + 知识页 + 分级审批 + 结构化审计 + 记忆代谢 + 记忆钉 + 语义检索 + /memory 命令",
-  "version": "0.4.0",
+  "description": "生物仿生记忆系统（Biomimetic Memory for DeepSeek Harness）v0.5：SQLite 数据层（node:sqlite 内置，零外部依赖）+ 本地嵌入模型语义检索（bge-small-zh-v1.5，离线）+ exact/semantic/hybrid 三模式 + RRF 融合 + Markdown 自动迁移 + 冻结快照注入 + 审批门 + 记忆代谢（断点续跑）+ 记忆钉 + 结构化审计（聚合统计）+ 深度反思 + 知识页 + /memory 命令",
+  "version": "0.5.0",
   "type": "module",
   "main": "./index.mjs",
   "exports": {
@@ -25,8 +25,8 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-tools": ">=0.1.0-rc.5",
-    "@deepseek-ai/dsh-session": ">=0.1.0-rc.5"
+    "@deepseek-ai/dsh-session": ">=0.1.0-rc.5",
+    "@deepseek-ai/dsh-tools": ">=0.1.0-rc.5"
   },
   "engines": {
     "node": ">=22.19.0"
@@ -37,6 +37,8 @@
   "license": "MIT",
   "files": [
     "index.mjs",
+    "db.mjs",
+    "embed.mjs",
     "client.js",
     "cordis.patch.yml",
     "README.md",
@@ -53,11 +55,20 @@
     "memory",
     "plugin",
     "biomimetic",
-    "markdown",
-    "recall"
+    "sqlite",
+    "semantic-search",
+    "embedding"
   ],
   "homepage": "https://github.com/KLRSL/dsh-biomemory#readme",
   "bugs": {
     "url": "https://github.com/KLRSL/dsh-biomemory/issues"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^4.2.0"
+  },
+  "devDependencies": {
+    "jsdom": "^25.0.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
   }
 }

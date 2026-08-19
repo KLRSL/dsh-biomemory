@@ -50,10 +50,14 @@ import fs from 'node:fs'
 import path from 'node:path'
 import http from 'node:http'
 import os from 'node:os'
+import * as db from './db.mjs'
+import * as embed from './embed.mjs'
 
 export const inject = ['tools', 'systemPrompt']
 
 // 记忆根目录：默认 ~/.dsh/memory（可用环境变量 DSH_MEMORY_ROOT 覆盖）
+// v0.5：SQLite 为主存储（~/.dsh/biomemory/biomemory.db），Markdown 保留为
+// 迁移源与只读备份（首次启动自动导入）
 const MEMORY_ROOT = process.env.DSH_MEMORY_ROOT || path.join(os.homedir(), '.dsh', 'memory')
 const TOOL_NAME = 'memory'
 const REQUEST_MARKER = '[dsh-biomemory]'
@@ -70,7 +74,11 @@ const DEFAULTS = {
   approvalFallback: 'auto', // 审批不可用（策略 never/服务缺失）时：auto=自动保存并审计 / deny=拒绝写入
   autoDreamDays: 7,       // 启动时距上次代谢 ≥ 此天数 → 自动执行（0=关闭）
   autoReflectDays: 3,     // 启动时距上次反思 ≥ 此天数 → 自动执行（0=关闭）
+  conflictOverlap: 3,     // 冲突仲裁：行为与单条偏好的专有双字重叠阈值（P0-003 二次验证）
 }
+
+// 冲突阈值从配置读取（模块加载时为默认，apply 时更新）
+let CONFLICT_OVERLAP_THRESHOLD = 3
 
 let CFG = { ...DEFAULTS }
 
@@ -128,6 +136,82 @@ function ensureDirs() {
     PATHS.backups,
   ]) {
     fs.mkdirSync(dir, { recursive: true })
+  }
+}
+
+// ---------- v0.5：SQLite 初始化 + Markdown 迁移 ----------
+
+// 首次启动：把现有 Markdown（hot/projects/longterm/preferences）导入 SQLite。
+// 迁移后 Markdown 保留为只读备份（不删除）；meta 表记录 migrated_at。
+function migrateMarkdownToDb() {
+  db.openDb()
+  if (db.metaGet('migrated_at') !== null) return { migrated: false, reason: 'already' }
+  const all = scanAllFiles()
+  let imported = 0
+  const prefsText = readFile(PATHS.preferences)
+  for (const f of all) {
+    const layer = f.layer === 'preferences' ? 'longterm' : f.layer
+    const fragmentType = f.layer === 'preferences' ? 'preference' : (f.layer.startsWith('projects') ? 'note' : 'fact')
+    for (const e of f.entries) {
+      try {
+        db.upsertEntry({
+          fp: e.fp,
+          layer,
+          fragment_type: fragmentType,
+          kind: e.kind,
+          mode: e.mode,
+          text: e.text,
+          weight: e.weight,
+          hits: e.hits,
+          pinned: e.pinned,
+          created_at: e.ts ? tsToIso(e.ts) : null,
+        })
+        imported++
+      } catch { /* 单条失败不阻断迁移 */ }
+    }
+  }
+  // 偏好作为 preference 条目
+  for (const line of prefsText.split('\n')) {
+    const e = parseEntryLine(line.trim())
+    if (e) {
+      try {
+        db.upsertEntry({ fp: e.fp, layer: 'longterm', fragment_type: 'preference', kind: '偏好', mode: 'pref', text: e.text, weight: Math.max(e.weight, 12), pinned: true })
+        imported++
+      } catch { /* ignore */ }
+    }
+  }
+  db.audit('MIGRATE', { detail: { imported, from: 'markdown', to: 'sqlite' } })
+  db.metaSet('migrated_at', db.isoNow())
+  db.metaSet('schema_version', '1')
+  return { migrated: true, imported }
+}
+
+// "2026-08-16 13:00" → ISO
+function tsToIso(ts) {
+  const m = String(ts).match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/)
+  if (!m) return null
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5])).toISOString()
+}
+
+// v0.5 向量索引：给无向量的活跃条目补算嵌入（模型可用时）
+async function ensureVectors() {
+  try {
+    const extractor = await embed.getExtractor()
+    if (!extractor) return { ok: false, reason: 'model-unavailable' }
+    const db2 = db.openDb()
+    const missing = db2.prepare("SELECT entry_id, text, summary FROM entries WHERE vector IS NULL AND status = 'active'").all()
+    if (missing.length === 0) return { ok: true, embedded: 0 }
+    const pairs = []
+    for (const row of missing) {
+      const vec = await embed.embed(row.summary || row.text)
+      if (vec) pairs.push([row.entry_id, vec])
+    }
+    if (pairs.length) db.setVectorsBatch(pairs)
+    db.audit('VECTORIZE', { detail: { count: pairs.length, total: missing.length } })
+    return { ok: true, embedded: pairs.length, pending: missing.length - pairs.length }
+  } catch (err) {
+    dbgLog(`ensureVectors failed: ${String(err && err.message || err)}`)
+    return { ok: false, reason: String(err && err.message || err) }
   }
 }
 
@@ -264,31 +348,28 @@ function rewriteFile(p, entries) {
   writeFile(p, text)
 }
 
-// ---------- 审计（结构化 JSONL，兼容旧日志） ----------
+// ---------- 审计（v0.5：SQLite audit_log 表；兼容旧 JSONL 日志） ----------
 
 function audit(event, data = {}) {
-  const rec = { t: isoNow(), event, ...data }
-  try { appendFile(PATHS.auditJson, JSON.stringify(rec) + '\n') } catch { /* ignore */ }
+  db.openDb()
+  const entryId = data.entry_id
+  const detail = { ...data }
+  delete detail.entry_id
+  db.audit(event, { entry_id: entryId, detail })
   // 旧版可读日志同步（一行摘要）
   const stamp = nowStamp()
   const brief = data.text ? data.text.slice(0, 60) : ''
   appendFile(PATHS.audit, `[${stamp}] ${event} ${data.fp || ''} ${brief}\n`)
-  return rec
+  return { t: isoNow(), event, ...data }
 }
 
-function queryAudit({ sinceDays, type } = {}) {
-  const cutoff = sinceDays ? Date.now() - sinceDays * 86400000 : 0
-  const out = []
-  for (const line of readFile(PATHS.auditJson).split('\n')) {
-    if (!line.trim()) continue
-    try {
-      const rec = JSON.parse(line)
-      if (type && rec.event !== type) continue
-      if (cutoff && new Date(rec.t).getTime() < cutoff) continue
-      out.push(rec)
-    } catch { /* 跳过坏行 */ }
-  }
-  return out
+function queryAudit({ sinceDays, type, entryId, actor, limit = 50 } = {}) {
+  return db.queryAudit({ sinceDays, type, entryId, actor, limit })
+}
+
+// 审计聚合统计（文档 P1-003）：groupBy = action | day | entry
+function auditAggregate({ sinceDays, groupBy = 'action' } = {}) {
+  return db.auditAggregate({ sinceDays, groupBy })
 }
 
 // ---------- 工具函数 ----------
@@ -321,16 +402,28 @@ function estimateTokens(s) {
 
 function writeEntry({ track, text, sessionId, approved, mode }) {
   ensureDirs()
+  db.openDb()
   const fp = fingerprint(text)
-  const file = track === 'user' ? PATHS.hotKnowledge : PATHS.hotBehavior
-  const existing = readFile(file)
-  if (existing.includes(`[fp:${fp}]`)) {
+  const dup = db.getByFp(fp)
+  if (dup) {
     return { ok: true, skipped: true, reason: 'duplicate' }
   }
   const modeLabel = mode === 'fallback' ? '降级' : (mode === 'ask' ? '审批' : (mode === 'auto' ? '自动' : (approved ? '审批' : '自动')))
-  const entry = { kind: track === 'user' ? '知识' : '行为', mode: modeLabel, fp, weight: 10, hits: 0, ts: nowStamp(), pinned: false, text: text.trim() }
-  appendFile(file, `## ${nowStamp()} · 会话 ${sessionId || '?'}\n${formatEntryLine(entry)}\n`)
-  audit('WRITE', { fp, track, approved: modeLabel, fallback: mode === 'fallback' ? true : undefined, text: text.trim() })
+  const layer = track === 'user' ? 'longterm' : 'longterm'
+  const fragmentType = track === 'user' ? (isImportant(text, track) ? 'preference' : 'fact') : 'lesson'
+  const entryId = db.upsertEntry({
+    fp,
+    layer,
+    fragment_type: fragmentType,
+    kind: track === 'user' ? '知识' : '行为',
+    mode: modeLabel,
+    text: text.trim(),
+    weight: 10,
+    hits: 0,
+    created_at: db.isoNow(),
+    pinned: false,
+  })
+  db.audit('WRITE', { entry_id: entryId, detail: { fp, track, approved: modeLabel, fallback: mode === 'fallback' ? true : undefined } })
   if (track === 'user') {
     appendFile(PATHS.preferences, `- [${nowStamp()}] ${text.trim()}\n`)
   }
@@ -341,25 +434,20 @@ function writeEntry({ track, text, sessionId, approved, mode }) {
 // ---------- 记忆钉（锁定不参与衰减） ----------
 
 function setPin(fp, pinned) {
-  for (const f of scanAllFiles()) {
-    for (const e of f.entries) {
-      if (e.fp === fp) {
-        e.pinned = pinned
-        rewriteFile(f.file, f.entries)
-        audit(pinned ? 'PIN' : 'UNPIN', { fp, text: e.text })
-        return { ok: true, fp, pinned, text: e.text }
-      }
-    }
-  }
-  return { ok: false, error: `未找到 [fp:${fp}]` }
+  db.openDb()
+  const e = db.getByFp(fp)
+  if (!e) return { ok: false, error: `未找到 [fp:${fp}]` }
+  const ok = db.setPinFp(fp, pinned, pinned ? 'memory pin' : undefined)
+  if (!ok) return { ok: false, error: `未找到 [fp:${fp}]` }
+  db.audit(pinned ? 'PIN' : 'UNPIN', { entry_id: e.entry_id, detail: { fp, text: e.text } })
+  return { ok: true, fp, pinned, text: e.text }
 }
 
 function findByText(q) {
+  db.openDb()
   const ql = q.toLowerCase()
-  for (const f of scanAllFiles()) {
-    for (const e of f.entries) {
-      if (e.text.toLowerCase().includes(ql)) return e
-    }
+  for (const e of db.allEntries()) {
+    if ((e.text || '').toLowerCase().includes(ql)) return e
   }
   return null
 }
@@ -393,81 +481,117 @@ function zhBigrams(s) {
   return out
 }
 
-// 冲突仲裁：行为条目的关键词与偏好冲突 → 偏好优先，行为降权并记录
+// 冲突仲裁（v0.5 修正，对应文档 P0-003 二次验证）：
+//   1) 教训/遵守语境排除：行为记录若为「踩坑教训/事故复盘/经验总结」
+//      （含教训词），说明是偏好强化记录而非当前矛盾，不判冲突
+//   2) 逐条偏好比对（非整文件）：行为条目与【单条】偏好做双字重叠，
+//      避免整文件并集导致泛词误判
+//   3) 泛化词过滤：偏好中的通用双字（网络/下载/镜像/用户/服务…）不计入
+//      重叠——只有「专有词重叠 ≥ 阈值」才构成冲突证据
+const CONFLICT_LEARN_HINTS = /教训|踩坑|事故复盘|切记|务必|禁止|不要|严禁|不得|一律|必须|先查|先确认|经验总结|复盘|注意点|注意事项|踩过的坑|以后注意|以后都|误删|误操作/
+const CONFLICT_GENERIC_BIGRAMS = new Set([
+  '网络', '下载', '镜像', '用户', '数据', '文件', '程序', '插件', '安装', '删除', '清理',
+  '更新', '版本', '使用', '进行', '一个', '这个', '可以', '需要', '直接', '本地', '系统',
+  '项目', '工具', '命令', '配置', '设置', '默认', '完全', '不要', '没有', '不是', '已经',
+  '之后', '之前', '时候', '服务', '加速', '速服', '告知', '访问', '打开',
+])
+
 function detectConflict(entry, prefsText) {
+  if (CONFLICT_LEARN_HINTS.test(entry.text)) return false
+  const prefLines = String(prefsText || '').split('\n').map((l) => l.trim()).filter((l) => l.length > 4)
+  if (!prefLines.length) return false
   const eb = zhBigrams(entry.text)
-  const pb = zhBigrams(prefsText)
-  let overlap = 0
-  for (const b of eb) if (pb.has(b)) overlap++
-  return overlap >= 4 // 至少 4 个双字重叠才算冲突（避免误判）
+  let maxOverlap = 0
+  for (const line of prefLines) {
+    const pb = zhBigrams(line)
+    let ov = 0
+    for (const b of eb) if (pb.has(b) && !CONFLICT_GENERIC_BIGRAMS.has(b)) ov++
+    if (ov > maxOverlap) maxOverlap = ov
+  }
+  return maxOverlap >= CONFLICT_OVERLAP_THRESHOLD
 }
 
-// 执行代谢。opts: { dryRun }
+// 执行代谢（v0.5：SQLite 版 + 断点续跑）。opts: { dryRun, resume }
 // 返回 { scanned, decayed, consolidated, conflicted, archived, backup }
 function runDream(opts = {}) {
   const dryRun = opts.dryRun === true
   const report = { scanned: 0, decayed: 0, consolidated: 0, conflicted: 0, archived: 0, backup: null, items: [] }
+  db.openDb()
   if (dryRun) {
     report.backup = '（dry-run 不执行备份）'
   } else {
-    report.backup = backupNow()
+    report.backup = db.backupDb()
   }
+  // 断点续跑（文档 P0-002）：上次中断位置恢复；每 100 条写一次检查点
+  const checkpointKey = 'dream_checkpoint'
+  const resumeFp = !dryRun && opts.resume !== false ? db.metaGet(checkpointKey) : null
   const prefsText = readFile(PATHS.preferences)
   const now = Date.now()
-  for (const f of scanAllFiles()) {
-    if (f.layer === 'preferences') continue // 偏好永不衰减
+  const entries = db.allEntries()
+  let started = false
+  let batchCount = 0
+  for (const e of entries) {
+    if (e.pinned || e.fragment_type === 'preference' || e.status === 'archived') continue
+    if (resumeFp && !started) {
+      if (e.fp === resumeFp) started = true
+      else continue
+    } else {
+      started = true
+    }
+    report.scanned++
     let changed = false
-    for (const e of f.entries) {
-      if (e.pinned) continue // 锁定不参与
-      report.scanned++
-      // 1. 衰减：w * 0.5^(age/halfLife)
-      let ageDays = 0
-      if (e.ts) {
-        const t = new Date(e.ts.replace(' ', 'T'))
-        if (!Number.isNaN(t.getTime())) ageDays = Math.max(0, (now - t.getTime()) / 86400000)
-      }
-      const decayed = e.weight * Math.pow(0.5, ageDays / CFG.halfLifeDays)
-      if (decayed < e.weight) {
-        report.decayed++
-        report.items.push({ op: 'DECAY', layer: f.layer, fp: e.fp, from: e.weight, to: Math.max(1, Math.round(decayed * 10) / 10) })
-        e.weight = Math.max(1, Math.round(decayed * 10) / 10)
-        changed = true
-      }
-      // 2. 巩固：引用 ≥ 阈值 → 加权（设上限）
-      if (e.hits >= CFG.consolidateThreshold && e.weight < CFG.weightCap) {
-        report.consolidated++
-        report.items.push({ op: 'CONSOLIDATE', layer: f.layer, fp: e.fp, to: Math.min(CFG.weightCap, e.weight + 1) })
-        e.weight = Math.min(CFG.weightCap, e.weight + 1)
-        changed = true
-      }
-      // 3. 冲突仲裁：行为与偏好冲突 → 偏好优先，行为降权
-      if (f.layer.startsWith('hot/behavior') && detectConflict(e, prefsText)) {
-        report.conflicted++
-        report.items.push({ op: 'CONFLICT', layer: f.layer, fp: e.fp, to: Math.max(1, e.weight * 0.5) })
-        e.weight = Math.max(1, Math.round(e.weight * 0.5 * 10) / 10)
-        changed = true
-      }
-      // 4. 归档：权重低于阈值 → 移入 archive/
-      if (e.weight < CFG.decayThreshold) {
-        report.archived++
-        report.items.push({ op: 'ARCHIVE', layer: f.layer, fp: e.fp, text: e.text })
-        if (!dryRun) {
-          const arcFile = path.join(PATHS.archive, f.layer.replace(/[/\\]/g, '-') + '.md')
-          appendFile(arcFile, `## ${nowStamp()} · 自动归档（权重 ${e.weight}）\n${formatEntryLine({ ...e, weight: e.weight })} \n`)
-        }
-        e._archived = true
-        changed = true
-      }
+    // 1. 衰减：w * 0.5^(age/halfLife)
+    let ageDays = 0
+    if (e.created_at) {
+      const t = new Date(e.created_at)
+      if (!Number.isNaN(t.getTime())) ageDays = Math.max(0, (now - t.getTime()) / 86400000)
+    }
+    const decayed = e.weight * Math.pow(0.5, ageDays / CFG.halfLifeDays)
+    if (decayed < e.weight) {
+      report.decayed++
+      report.items.push({ op: 'DECAY', layer: e.layer, fp: e.fp, entry_id: e.entry_id, from: e.weight, to: Math.max(1, Math.round(decayed * 10) / 10) })
+      e.weight = Math.max(1, Math.round(decayed * 10) / 10)
+      changed = true
+    }
+    // 2. 巩固：引用 ≥ 阈值 → 加权（设上限）
+    if (e.hits >= CFG.consolidateThreshold && e.weight < CFG.weightCap) {
+      report.consolidated++
+      report.items.push({ op: 'CONSOLIDATE', layer: e.layer, fp: e.fp, entry_id: e.entry_id, to: Math.min(CFG.weightCap, e.weight + 1) })
+      e.weight = Math.min(CFG.weightCap, e.weight + 1)
+      changed = true
+    }
+    // 3. 冲突仲裁：行为与偏好冲突 → 偏好优先，行为降权
+    if (e.kind === '行为' && detectConflict(e, prefsText)) {
+      report.conflicted++
+      report.items.push({ op: 'CONFLICT', layer: e.layer, fp: e.fp, entry_id: e.entry_id, to: Math.max(1, e.weight * 0.5) })
+      e.weight = Math.max(1, Math.round(e.weight * 0.5 * 10) / 10)
+      changed = true
+    }
+    // 4. 归档：权重低于阈值 → status=archived（保留记录，文档 §2.4.3 冷归档）
+    let archivedNow = false
+    if (e.weight < CFG.decayThreshold) {
+      report.archived++
+      report.items.push({ op: 'ARCHIVE', layer: e.layer, fp: e.fp, entry_id: e.entry_id, text: e.text })
+      archivedNow = true
+      changed = true
     }
     if (changed && !dryRun) {
-      const keep = f.entries.filter((e) => !e._archived)
-      rewriteFile(f.file, keep)
+      db.upsertEntry({
+        ...e,
+        status: archivedNow ? 'archived' : 'active',
+        weight: e.weight,
+      })
+    }
+    // 检查点：每 100 条记录进度（断点续跑）
+    if (!dryRun && ++batchCount % 100 === 0) {
+      db.metaSet(checkpointKey, e.fp)
     }
   }
+  if (!dryRun) db.metaSet(checkpointKey, '') // 完成清空检查点
   // 审计记录（dry-run 也记录 PREVIEW）
   for (const it of report.items) {
     if (dryRun) audit('PREVIEW', { op: it.op, fp: it.fp })
-    else audit(it.op, { fp: it.fp, text: it.text || '' })
+    else audit(it.op, { fp: it.fp, text: it.text || '', entry_id: it.entry_id })
   }
   return report
 }
@@ -651,68 +775,110 @@ function semanticSearch(query, entries, topN = 5) {
 
 // ---------- 自动巩固（用进废退）+ 安全删除 ----------
 
-// 被查询/召回的条目 hits+1 并写回（引用越多越不易被遗忘）
+// 被查询/召回的条目 hits+1（用进废退，SQLite 版本）
 function consolidateHits(fpSet) {
   if (!fpSet || !fpSet.size) return 0
-  let files = 0
-  for (const f of scanAllFiles()) {
-    let dirty = false
-    for (const e of f.entries) {
-      if (fpSet.has(e.fp)) { e.hits += 1; dirty = true }
-    }
-    if (dirty) { rewriteFile(f.file, f.entries); files++ }
+  db.openDb()
+  for (const fp of fpSet) {
+    db.touchEntry(fp, { hitsDelta: 1 })
   }
-  return files
+  return fpSet.size
 }
 
-// 安全删除：先备份主文件到 backups/ 再删条目（可回滚，保持透明可改）
+// 安全删除：先备份数据库再删条目（可回滚）
 function removeEntry(fp) {
-  for (const f of scanAllFiles()) {
-    const e = f.entries.find((x) => x.fp === fp)
-    if (e) {
-      const bk = backupNow()
-      rewriteFile(f.file, f.entries.filter((x) => x.fp !== fp))
-      audit('REMOVE', { fp, layer: f.layer, text: e.text, backup: bk })
-      return { ok: true, fp, layer: f.layer, text: e.text, backup: bk }
-    }
-  }
-  return { ok: false, error: `未找到 [fp:${fp}]` }
+  db.openDb()
+  const e = db.getByFp(fp)
+  if (!e) return { ok: false, error: `未找到 [fp:${fp}]` }
+  const bk = db.backupDb()
+  db.removeByFp(fp)
+  db.audit('REMOVE', { entry_id: e.entry_id, detail: { fp, text: e.text, backup: bk } })
+  return { ok: true, fp, layer: e.layer, text: e.text, backup: bk }
 }
 
-// ---------- 查询（关键词优先，语义补充；命中自动巩固） ----------
+// 条目状态（知识页状态色）：conflict=与偏好冲突（红）/ warning=低权重待处理（黄）/ ok=正常（绿）
+function entryStatus(e, prefsText) {
+  if (e.kind === '行为' && detectConflict(e, prefsText)) return 'conflict'
+  if (e.status !== 'archived' && Number(e.weight) < CFG.decayThreshold) return 'warning'
+  return 'ok'
+}
 
-function queryEntries(query, limit = CFG.maxQueryResults) {
-  const out = []
-  const ql = query.toLowerCase()
-  const hitFps = new Set()
-  // 关键词精确匹配（命中 +1 引用计数，写回以巩固；读文件本身只读一次避免写放大）
-  for (const f of scanAllFiles()) {
-    for (const e of f.entries) {
-      if (!ql || e.text.toLowerCase().includes(ql)) {
-        out.push({ layer: f.layer, fp: e.fp, text: e.text, weight: e.weight })
-        if (ql) hitFps.add(e.fp)
-      }
+// 编辑条目文本：保留 fp/锁定/权重等元数据，清空旧向量（文本变了向量失效），审计可追溯
+function updateEntryText(fp, text) {
+  db.openDb()
+  const e = db.getByFp(fp)
+  if (!e) return { ok: false, error: `未找到 [fp:${fp}]` }
+  const trimmed = String(text ?? '').trim()
+  if (!trimmed) return { ok: false, error: 'text 必填' }
+  if (trimmed === e.text) return { ok: true, note: '文本未变化', fp }
+  const dupFp = fingerprint(trimmed)
+  if (dupFp !== fp) {
+    const dup = db.getByFp(dupFp)
+    if (dup) return { ok: false, error: '与已有记忆重复（文本指纹已存在）' }
+  }
+  const from = e.text
+  db.upsertEntry({ fp, text: trimmed })
+  try { db.openDb().prepare('UPDATE entries SET vector = NULL WHERE fp = ?').run(fp) } catch { /* 向量清理失败不影响编辑 */ }
+  db.audit('UPDATE', { entry_id: e.entry_id, detail: { fp, from: from.slice(0, 80), to: trimmed.slice(0, 80) } })
+  return { ok: true, fp, text: trimmed }
+}
+
+// ---------- 查询（v0.5：exact / semantic / hybrid 三模式，命中自动巩固） ----------
+
+async function queryEntries(query, limit = CFG.maxQueryResults, opts = {}) {
+  db.openDb()
+  const mode = opts.mode || 'hybrid'
+  const projectId = opts.projectId || undefined
+  const topK = opts.topK || limit
+  const minWeight = opts.minWeight ?? 0.1
+  const fragmentTypes = Array.isArray(opts.fragmentTypes) && opts.fragmentTypes.length ? new Set(opts.fragmentTypes) : null
+  const includeArchived = opts.includeArchived === true
+
+  const ql = (query || '').toLowerCase()
+  let entries = db.allEntries({ includeArchived })
+  if (projectId) entries = entries.filter((e) => e.project_id === projectId)
+  if (fragmentTypes) entries = entries.filter((e) => fragmentTypes.has(e.fragment_type))
+
+  // 关键词精确命中（低配时的兜底 + 自动巩固）
+  const kwHits = new Set()
+  if (ql) {
+    for (const e of entries) {
+      if ((e.text || '').toLowerCase().includes(ql)) kwHits.add(e.fp)
     }
   }
-  // 关键词命中少 → 语义补充（召回前 5 条未命中条目）
-  if (ql && out.length < 5) {
-    const all = []
-    for (const f of scanAllFiles()) for (const e of f.entries) all.push({ layer: f.layer, ...e })
-    const hits = new Set(out.map((o) => o.fp))
-    const sem = semanticSearch(query, all.filter((e) => !hits.has(e.fp)), 5)
-    const byFp = new Map(all.map((e) => [e.fp, e]))
-    for (const s of sem) {
-      const e = byFp.get(s.fp)
-      if (e) {
-        out.push({ layer: e.layer, fp: e.fp, text: e.text, weight: e.weight, semantic: true })
-        hitFps.add(e.fp)
+  // 三模式检索
+  const vectorEntries = db.entriesWithVectors({ includeArchived })
+  const results = await embed.search({
+    query: query || '',
+    mode,
+    entries,
+    vectorEntries: vectorEntries.length ? vectorEntries : null,
+    topN: topK,
+    minWeight,
+  })
+  const out = []
+  const hitFps = new Set()
+  for (const r of results) {
+    const e = r.entry
+    if (!e) continue
+    const isSem = mode !== 'exact' && !kwHits.has(e.fp)
+    out.push({ layer: e.layer, fp: e.fp, text: e.text, weight: e.weight, semantic: isSem, score: r.score, fragment_type: e.fragment_type })
+    if (ql) hitFps.add(e.fp)
+  }
+  // 精确关键词命中未进 top-N 的也补入（保底不丢）
+  if (ql && kwHits.size) {
+    const inOut = new Set(out.map((o) => o.fp))
+    for (const e of entries) {
+      if (kwHits.has(e.fp) && !inOut.has(e.fp) && out.length < limit) {
+        out.push({ layer: e.layer, fp: e.fp, text: e.text, weight: e.weight, semantic: false })
+        inOut.add(e.fp)
       }
     }
   }
   // 用进废退：带关键词的真实召回才巩固（list 浏览不计）
   if (ql && hitFps.size) {
     const files = consolidateHits(hitFps)
-    if (files) audit('RECALL', { count: hitFps.size, files })
+    if (files) db.audit('RECALL', { detail: { count: hitFps.size, files } })
   }
   return out.slice(0, limit)
 }
@@ -720,20 +886,21 @@ function queryEntries(query, limit = CFG.maxQueryResults) {
 // ---------- 冻结快照（会话启动注入 system prompt；注册即冻结） ----------
 
 function renderSnapshot() {
-  const prefs = readFile(PATHS.preferences).trim()
-  const all = scanAllFiles()
+  db.openDb()
+  const prefs = db.listEntries({ fragmentType: 'preference', status: 'active', limit: 200 })
+    .map((e) => `- [${e.created_at ? String(e.created_at).slice(0, 10) : ''}] ${e.text}`)
+    .join('\n')
+  const all = db.allEntries()
   const pinned = []
   const kb = []
   const bb = []
-  for (const f of all) {
-    for (const e of f.entries) {
-      if (e.pinned) pinned.push(`- [锁定|${f.layer}] ${e.text}`)
-      else if (f.layer === 'hot/knowledge') kb.push(e)
-      else if (f.layer === 'hot/behavior') bb.push(e)
-    }
+  for (const e of all) {
+    if (e.pinned) pinned.push(`- [锁定|${e.layer}] ${e.text}`)
+    else if (e.fragment_type === 'preference' || e.kind === '知识') kb.push(e)
+    else bb.push(e)
   }
   // 自动召回排序：权重高、新近的优先（预算内只注入最有价值的）
-  const rank = (a, b) => (b.weight - a.weight) || (String(b.ts || '').localeCompare(String(a.ts || '')))
+  const rank = (a, b) => (b.weight - a.weight) || (String(b.created_at || '').localeCompare(String(a.created_at || '')))
   const fmt = (e) => `- [${e.layer}] ${e.text}`
   const parts = []
   if (prefs) parts.push('## 用户偏好（最高优先级）\n' + prefs)
@@ -788,21 +955,16 @@ async function gateWrite(ctx, { track, text }) {
 // ---------- 启动自检：主文件解析失败 → 回滚最近备份 ----------
 
 function selfHeal() {
+  // v0.5：SQLite 完整性自检——数据库损坏（如 SQLITE_CORRUPT）时从最近备份恢复
   try {
-    // 尝试解析主文件，若有异常字节/结构损坏则回滚
-    for (const p of [PATHS.hotBehavior, PATHS.hotKnowledge]) {
-      const t = readFile(p)
-      if (t.includes('\u0000')) throw new Error('corrupt')
-    }
+    db.openDb()
+    db.stats() // 触发一次全表读，损坏会抛
   } catch {
-    const bk = latestBackup()
-    if (bk) {
-      for (const f of ['behavior.md', 'knowledge.md', 'preferences.md']) {
-        const src = path.join(bk, f)
-        const dst = path.join(MEMORY_ROOT, f === 'behavior.md' ? 'hot/behavior.md' : f === 'knowledge.md' ? 'hot/knowledge.md' : f)
-        if (fs.existsSync(src)) fs.copyFileSync(src, dst)
-      }
-      audit('ROLLBACK', { from: bk })
+    const bk = db.listBackups()
+    if (bk.length) {
+      const restored = db.restoreLatestBackup()
+      db.audit('ROLLBACK', { detail: { from: restored } })
+      dbgLog(`self-heal: restored from ${restored}`)
     }
   }
 }
@@ -840,14 +1002,15 @@ function makeMemoryTool(ctx) {
     description: [
       '跨会话记忆系统：保存/查询值得记住的事实、偏好、教训。',
       '用法: memory action=add text="..." [track=user|agent] —— 保存（重要项自动请求审批，审批不可用时按配置自动保存）',
-      '      memory action=query text="关键词" —— 查询（关键词优先，语义补充；命中自动巩固）',
+      '      memory action=query text="关键词" [mode=hybrid|exact|semantic] [projectId=项目] [topK=10] [minWeight=0.1] [fragmentTypes=decision,preference] [includeArchived=false] —— 查询',
+      '           （hybrid=精确+语义混合（默认）；exact=关键词精确；semantic=向量语义；命中自动巩固）',
       '      memory action=remove fp="指纹" —— 删除一条（自动备份，可回滚）',
       '      memory action=list —— 列出全部条目',
       '      memory action=pin fp="指纹" —— 锁定（不参与衰减）',
       '      memory action=unpin fp="指纹" —— 解锁',
-      '      memory action=dream [dryRun=true] —— 记忆代谢（衰减/巩固/归档）',
+      '      memory action=dream [dryRun=true] [resume=true] —— 记忆代谢（衰减/巩固/归档，支持断点续跑）',
       '      memory action=reflect [dryRun=true] —— 深度反思（主题聚类/趋势/冲突/遗忘建议）',
-      '      memory action=audit [type="DECAY"] [sinceDays=7] —— 结构化审计查询',
+      '      memory action=audit [type="DECAY"] [sinceDays=7] [aggregate=true] [groupBy=action|day|entry] —— 结构化审计查询/聚合',
       '保存原则：用户偏好/纠正/项目决策/踩坑教训要保存；琐事、一次性路径、可从代码重新推导的事实不保存。',
     ].join('\n'),
     parameters: {
@@ -860,6 +1023,15 @@ function makeMemoryTool(ctx) {
         dryRun: { type: 'boolean', description: 'dream/reflect 时预览不执行' },
         type: { type: 'string', description: 'audit 过滤事件类型' },
         sinceDays: { type: 'number', description: 'audit 只看最近 N 天' },
+        mode: { type: 'string', enum: ['hybrid', 'exact', 'semantic'], description: 'query 检索模式（默认 hybrid）' },
+        projectId: { type: 'string', description: 'query 限定项目范围' },
+        topK: { type: 'number', description: 'query 返回结果数量上限' },
+        minWeight: { type: 'number', description: 'query 最低权重阈值' },
+        fragmentTypes: { type: 'string', description: 'query 限定片段类型（逗号分隔：decision,preference,fact,event,note）' },
+        includeArchived: { type: 'boolean', description: 'query 是否包含冷归档记忆' },
+        aggregate: { type: 'boolean', description: 'audit 聚合统计模式' },
+        groupBy: { type: 'string', enum: ['action', 'day', 'entry'], description: 'audit 聚合维度（默认 action）' },
+        resume: { type: 'boolean', description: 'dream 断点续跑（默认 true）' },
       },
       required: ['action'],
     },
@@ -910,7 +1082,7 @@ function makeMemoryTool(ctx) {
       return { card: 'generic', title: `记忆：${args?.action || ''}`, kind: 'other', rawInput: args }
     },
     async execute(args, exec) {
-      const { action, text = '', track = 'agent', fp, dryRun, type, sinceDays } = args || {}
+      const { action, text = '', track = 'agent', fp, dryRun, type, sinceDays, mode, projectId, topK, minWeight, fragmentTypes, includeArchived, aggregate, groupBy, resume } = args || {}
       const sessionId = exec.agent?.id
       if (action === 'add') {
         if (!text.trim()) return { ok: false, error: 'text 必填' }
@@ -919,8 +1091,13 @@ function makeMemoryTool(ctx) {
         const r = writeEntry({ track, text: text.trim(), sessionId, approved: g.mode === 'ask', mode: g.mode })
         return { ok: true, ...r, mode: g.mode }
       }
-      if (action === 'query') return { ok: true, entries: queryEntries(text) }
-      if (action === 'list') return { ok: true, entries: queryEntries('') }
+      if (action === 'query') {
+        const fts = typeof fragmentTypes === 'string' && fragmentTypes.trim()
+          ? fragmentTypes.split(',').map((s) => s.trim()).filter(Boolean)
+          : undefined
+        return { ok: true, entries: await queryEntries(text, topK || CFG.maxQueryResults, { mode, projectId, topK: topK || CFG.maxQueryResults, minWeight, fragmentTypes: fts, includeArchived }) }
+      }
+      if (action === 'list') return { ok: true, entries: await queryEntries('', topK || 200, { mode: 'exact' }) }
       if (action === 'remove') {
         if (!fp) return { ok: false, error: 'fp 必填（先 query 找到指纹）' }
         const r = removeEntry(fp)
@@ -932,7 +1109,7 @@ function makeMemoryTool(ctx) {
         return r.ok ? { ok: true, note: `已${action === 'pin' ? '锁定' : '解锁'} [fp:${fp}]` } : r
       }
       if (action === 'dream') {
-        const r = runDream({ dryRun: dryRun === true })
+        const r = runDream({ dryRun: dryRun === true, resume })
         return { ok: true, report: { ...r, dryRun: dryRun === true } }
       }
       if (action === 'reflect') {
@@ -940,9 +1117,14 @@ function makeMemoryTool(ctx) {
         return { ok: true, report: { ...r, dryRun: dryRun === true } }
       }
       if (action === 'audit') {
+        if (aggregate === true) {
+          const agg = auditAggregate({ sinceDays, groupBy: groupBy || 'action' })
+          if (!agg.length) return { ok: true, note: '（无匹配审计记录）' }
+          return { ok: true, note: '审计聚合统计：\n' + agg.map((a) => `- ${a.key}: ${a.count}`).join('\n') }
+        }
         const recs = queryAudit({ sinceDays, type })
         if (!recs.length) return { ok: true, note: '（无匹配审计记录）' }
-        return { ok: true, note: recs.slice(-20).map((r) => `${r.t.slice(0, 16)} ${r.event} ${r.fp || ''} ${r.approved ? '[' + r.approved + ']' : ''} ${r.text || ''}`).join('\n') }
+        return { ok: true, note: recs.slice(-20).map((r) => `${r.t.slice(0, 16)} ${r.action} ${r.entry_id || ''} ${r.detail || ''}`).join('\n') }
       }
       return { ok: false, error: '未知 action' }
     },
@@ -1112,12 +1294,24 @@ function readBody(req) {
 
 export function apply(ctx, config = {}) {
   ensureDirs()
+  // v0.5：SQLite 初始化 + Markdown 一次性迁移（meta 幂等）
+  let migrateResult = null
+  try {
+    migrateResult = migrateMarkdownToDb()
+    if (migrateResult.migrated) dbgLog(`migrate: imported=${migrateResult.imported}`)
+  } catch (err) {
+    dbgLog(`migrate failed: ${String(err && err.message || err)}`)
+  }
   // 配置优先级：bundle 传入 config > 持久化 biomemory.config.json > 默认值
   const persisted = loadConfig()
   CFG = { ...DEFAULTS, ...persisted, ...(typeof config === 'object' && config ? config : {}) }
+  CONFLICT_OVERLAP_THRESHOLD = Number(CFG.conflictOverlap) || 3
   PET_ENDPOINT = typeof CFG.petEndpoint === 'string' ? CFG.petEndpoint : null
   selfHeal()
   dbgLog('=== apply 执行 ===')
+
+  // v0.5：后台预建向量索引（模型可用时，不阻塞启动）
+  setTimeout(() => { ensureVectors().then((r) => dbgLog(`vectors: ${JSON.stringify(r)}`)) }, 100)
 
   // 0. 启动自动代谢/反思（距上次执行 ≥ 配置天数时自动执行，0=关闭）
   try {
@@ -1141,11 +1335,14 @@ export function apply(ctx, config = {}) {
     dbgLog(`auto run failed: ${String(err && err.message || err)}`)
   }
 
-  // 1. 冻结快照注入（会话启动 → system prompt；官方 PromptSection = {name, order, text}）
-  ctx.systemPrompt.section({
+  // 1. 动态记忆上下文（每次对话/新会话组装提示词时自动重新求值 → 最新记忆同步）
+  //    官方契约：PromptContext.text 支持 string | (context) => string，
+  //    provider 形式每次 assemble 时重新渲染 renderSnapshot()——
+  //    新增的记忆、权重变化、锁定状态都会实时反映，无需重启
+  ctx.systemPrompt.context({
     name: 'memory:snapshot',
     order: -50,
-    text: renderSnapshot(),
+    text: () => renderSnapshot(),
   })
 
   // 2. memory 工具 + memory_recall 工具
@@ -1181,16 +1378,14 @@ export function apply(ctx, config = {}) {
       }
       try {
         if (req.method === 'GET' && p === '/status') {
-          const all = scanAllFiles()
-          let total = 0, pinned = 0
-          const layers = {}
-          for (const f of all) {
-            layers[f.layer] = f.entries.length
-            total += f.entries.length
-            for (const e of f.entries) if (e.pinned) pinned++
-          }
+          const s = db.stats()
           const auditRecs = queryAudit({})
-          return send(200, { ok: true, stats: { total, pinned, layers, memoryRoot: MEMORY_ROOT, auditCount: auditRecs.length }, config: CFG, petEndpoint: PET_ENDPOINT })
+          // 概览页图表数据：类型分布 / 权重分布 / 近 7 天审计聚合
+          const conn = db.openDb()
+          const byType = conn.prepare('SELECT fragment_type AS k, COUNT(*) AS c FROM entries GROUP BY fragment_type ORDER BY c DESC').all().map((r) => ({ key: r.k, count: r.c }))
+          const byWeight = conn.prepare("SELECT CASE WHEN weight >= 10 THEN '10+' WHEN weight >= 5 THEN '5-9' WHEN weight >= 3 THEN '3-4' ELSE '<3' END AS k, COUNT(*) AS c FROM entries GROUP BY k ORDER BY c DESC").all().map((r) => ({ key: r.k, count: r.c }))
+          const audit7d = auditAggregate({ sinceDays: 7 })
+          return send(200, { ok: true, stats: { total: s.total, pinned: s.pinned, layers: s.layers, memoryRoot: MEMORY_ROOT, auditCount: auditRecs.length, dbPath: s.dbPath, vectors: db.vectorCount(), model: embed.modelInfo(), migration: db.migrationStatus(), byType, byWeight, audit7d }, config: CFG, petEndpoint: PET_ENDPOINT })
         }
         if (req.method === 'GET' && p === '/config') {
           return send(200, { ok: true, config: CFG, petEndpoint: PET_ENDPOINT })
@@ -1239,17 +1434,39 @@ export function apply(ctx, config = {}) {
         if (req.method === 'GET' && p === '/entries') {
           const q = url.searchParams.get('q') || ''
           const layer = url.searchParams.get('layer') || ''
+          const mode = url.searchParams.get('mode') || 'hybrid'
           const limit = Math.min(500, Number(url.searchParams.get('limit')) || 200)
-          const all = []
-          for (const f of scanAllFiles()) {
-            for (const e of f.entries) {
-              if (layer && f.layer !== layer) continue
-              if (q && !(e.text.toLowerCase().includes(q.toLowerCase()) || semanticSearch(q, [{ fp: e.fp, text: e.text }], 1).length)) continue
-              all.push({ layer: f.layer, fp: e.fp, kind: e.kind, mode: e.mode, weight: e.weight, hits: e.hits, ts: e.ts, pinned: e.pinned, text: e.text })
+          const prefsText = readFile(PATHS.preferences)
+          // v0.5：带关键词走三模式检索（hybrid 语义优先）；纯浏览走精确列表
+          if (q) {
+            const res = await queryEntries(q, limit, { mode, minWeight: 0 })
+            const seen = new Set()
+            const merged = []
+            for (const r of res) {
+              if (seen.has(r.fp)) continue
+              seen.add(r.fp)
+              merged.push({ layer: r.layer, fp: r.fp, kind: r.kind, mode: r.mode, weight: r.weight, hits: r.hits, ts: r.ts, pinned: r.pinned, text: r.text, fragment_type: r.fragment_type, semantic: r.semantic, status: entryStatus(r, prefsText) })
             }
+            return send(200, { ok: true, entries: merged.slice(0, limit), mode })
           }
-          all.sort((a, b) => (b.pinned - a.pinned) || (b.weight - a.weight) || String(b.ts || '').localeCompare(String(a.ts || '')))
-          return send(200, { ok: true, entries: all.slice(0, limit) })
+          const all = db.listEntries({ layer: layer || undefined, limit: 1000 })
+          all.sort((a, b) => (b.pinned - a.pinned) || (b.weight - a.weight) || String(b.created_at || '').localeCompare(String(a.created_at || '')))
+          return send(200, { ok: true, entries: all.slice(0, limit).map((e) => ({ layer: e.layer, fp: e.fp, kind: e.kind, mode: e.mode, weight: e.weight, hits: e.hits, ts: e.created_at, pinned: e.pinned, text: e.text, fragment_type: e.fragment_type, status: entryStatus(e, prefsText) })) })
+        }
+        if (req.method === 'GET' && p === '/vectors') {
+          // 手动触发向量索引补算（POST /vectors 亦可）
+          const r = await ensureVectors()
+          return send(200, { ok: true, ...r })
+        }
+        if (req.method === 'POST' && p === '/vectors') {
+          const r = await ensureVectors()
+          return send(200, { ok: true, ...r })
+        }
+        if (req.method === 'GET' && p === '/audit/aggregate') {
+          const sinceDays = Number(url.searchParams.get('sinceDays')) || undefined
+          const groupBy = url.searchParams.get('groupBy') || 'action'
+          const agg = auditAggregate({ sinceDays, groupBy })
+          return send(200, { ok: true, entries: agg })
         }
         if (req.method === 'POST' && p === '/entries/pin') {
           let body = {}
@@ -1271,6 +1488,13 @@ export function apply(ctx, config = {}) {
           if (!body.fp) return send(400, { ok: false, error: 'fp 必填' })
           const r = removeEntry(body.fp)
           return r.ok ? send(200, { ok: true, fp: r.fp, backup: r.backup }) : send(404, r)
+        }
+        if (req.method === 'POST' && p === '/entries/update') {
+          let body = {}
+          try { body = JSON.parse(await readBody(req)) } catch { /* ignore */ }
+          if (!body.fp || !String(body.text ?? '').trim()) return send(400, { ok: false, error: 'fp 与 text 必填' })
+          const r = updateEntryText(body.fp, body.text)
+          return r.ok ? send(200, { ok: true, fp: r.fp, text: r.text, note: r.note }) : send(404, r)
         }
         if (req.method === 'GET' && p === '/audit') {
           const sinceDays = Number(url.searchParams.get('sinceDays')) || undefined
@@ -1340,14 +1564,19 @@ export const __internals = {
   latestReflection,
   consolidateHits,
   removeEntry,
+  updateEntryText,
+  entryStatus,
   semanticSearch,
   tokenize,
   queryAudit,
+  auditAggregate,
   queryEntries,
   setPin,
   scanAllFiles,
   backupNow,
   latestBackup,
+  migrateMarkdownToDb,
+  ensureVectors,
   setConfig: (c) => { CFG = { ...DEFAULTS, ...c } },
   getConfig: () => ({ ...CFG }),
   paths: PATHS,

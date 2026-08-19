@@ -7,22 +7,59 @@ window.__ModuleLoader__.load({
 		let react = require("react");
 		let prim = require("@deepseek-ai/dsh-client-ui-primitives");
 		//#region src/client/index.ts
-		/** Biomemory settings page: memory stats, config, knowledge base, reflection. */
+		/**
+		 * Biomemory settings page — 记忆工作台（设计稿 v2 · 巨构视觉）
+		 *
+		 * 用户定稿（2026-08-19）：五个入口 = 概览 / 知识库 / 代谢 / 反思 / 设置
+		 * 设计语言（借鉴时叙「巨构视觉」）：
+		 *   - 宣纸暖底 #F5F0EB（浅）/ 墨底（深）
+		 *   - 墨色文字 #1C1917，弱化 #8A857E
+		 *   - 金线分割 #C9A96A，朱砂点缀 #B45309
+		 *   - 圆角 12/16，4/8px 栅格，字号阶梯
+		 */
 		const copy = {
 			"zh-CN": {
 				tab: "记忆",
-				title: "记忆系统",
-				tabSettings: "设置",
+				title: "记忆工作台",
+				subtitle: "数字海马体 · 151 条记忆 · 语义检索已就绪",
+				tabOverview: "概览",
 				tabKnowledge: "知识库",
-				tabReflect: "深度反思",
+				tabMetabolism: "代谢",
+				tabReflect: "反思",
+				tabSettings: "设置",
 				loading: "正在读取状态…",
 				unavailable: "暂时无法读取运行状态，但记忆系统不会影响现有工具或上下文。",
-				stats: "运行统计",
-				total: "总条数",
-				pinned: "锁定数",
-				auditCount: "审计事件",
-				layersTitle: "分层分布",
-				memoryRoot: "记忆根目录",
+				total: "全部记忆",
+				totalNote: "总条数",
+				pinned: "锁定",
+				pinnedNote: "记忆钉",
+				model: "嵌入模型",
+				modelNote: "bge-zh · 512维",
+				modelTag: "本地离线",
+				audit: "代谢健康",
+				auditNote: "近7天事件",
+				auditTag: "10+ 权重 135 条",
+				vectorized: "已向量化",
+				composition: "记忆构成",
+				typeDist: "类型分布",
+				weightDist: "权重分布",
+				recentActivity: "近 7 天活动",
+				flow: "记忆流",
+				searchPlaceholder: "搜记忆：如「镜像下载」「桌宠规则」…",
+				modeHybrid: "◉ 混合检索 hybrid",
+				modeExact: "○ 关键词 exact",
+				modeSemantic: "○ 语义 semantic",
+				searchBtn: "搜索",
+				noEntries: "（无匹配记忆）",
+				entriesLoading: "读取知识库…",
+				entriesFailed: "知识库读取失败",
+				allLayers: "全部分层",
+				pin: "锁定",
+				unpin: "解锁",
+				remove: "删除",
+				removeConfirm: "确定删除这条记忆？会自动备份，可回滚。",
+				weight: "权重",
+				hits: "引用",
 				config: "系统配置",
 				halfLifeDays: "半衰期（天）",
 				halfLifeDaysHelp: "记忆权重每经过这么多天衰减一半（默认 7）",
@@ -64,23 +101,11 @@ window.__ModuleLoader__.load({
 				archived: "归档",
 				backup: "备份",
 				noItems: "（无条目）",
-				audit: "审计记录",
 				runAudit: "最近审计",
+				auditTitle: "审计记录",
 				auditLoading: "读取中…",
 				auditFailed: "审计读取失败",
 				noAudit: "（暂无审计记录）",
-				search: "搜索记忆（语义召回）…",
-				searchBtn: "搜索",
-				allLayers: "全部分层",
-				noEntries: "（无匹配记忆）",
-				entriesLoading: "读取知识库…",
-				entriesFailed: "知识库读取失败",
-				pin: "锁定",
-				unpin: "解锁",
-				remove: "删除",
-				removeConfirm: "确定删除这条记忆？会自动备份，可回滚。",
-				weight: "权重",
-				hits: "引用",
 				reflectRun: "执行深度反思",
 				reflectPreview: "预览 (dry-run)",
 				reflectRunning: "反思中…",
@@ -107,52 +132,80 @@ window.__ModuleLoader__.load({
 			},
 			en: {
 				tab: "Memory",
-				title: "Memory system",
-				tabSettings: "Settings",
+				title: "Memory Workbench",
+				subtitle: "Digital Hippocampus · 151 memories · semantic search ready",
+				tabOverview: "Overview",
 				tabKnowledge: "Knowledge",
+				tabMetabolism: "Metabolism",
 				tabReflect: "Reflect",
+				tabSettings: "Settings",
 				loading: "Reading status…",
-				unavailable: "Runtime status is temporarily unavailable. Memory never removes existing tools or context.",
-				stats: "Statistics",
-				total: "Total entries",
+				unavailable: "Runtime status is temporarily unavailable.",
+				total: "All memories",
+				totalNote: "total",
 				pinned: "Pinned",
-				auditCount: "Audit events",
-				layersTitle: "By layer",
-				memoryRoot: "Memory root",
+				pinnedNote: "pins",
+				model: "Embedding",
+				modelNote: "bge-zh · 512d",
+				modelTag: "local offline",
+				audit: "Metabolism",
+				auditNote: "7d events",
+				auditTag: "135 entries w≥10",
+				vectorized: "vectorized",
+				composition: "Composition",
+				typeDist: "By type",
+				weightDist: "By weight",
+				recentActivity: "Recent activity",
+				flow: "Memory flow",
+				searchPlaceholder: "Search: e.g. mirror download, pet rules…",
+				modeHybrid: "◉ Hybrid",
+				modeExact: "○ Exact",
+				modeSemantic: "○ Semantic",
+				searchBtn: "Search",
+				noEntries: "(no matching entries)",
+				entriesLoading: "Loading…",
+				entriesFailed: "Failed to load",
+				allLayers: "All layers",
+				pin: "Pin",
+				unpin: "Unpin",
+				remove: "Remove",
+				removeConfirm: "Remove this entry? A backup is made first.",
+				weight: "weight",
+				hits: "hits",
 				config: "Configuration",
 				halfLifeDays: "Half-life (days)",
-				halfLifeDaysHelp: "Memory weight halves after this many days (default 7)",
+				halfLifeDaysHelp: "Weight halves after this many days (default 7)",
 				decayThreshold: "Decay threshold",
 				decayThresholdHelp: "Entries below this weight are archived (default 3)",
 				consolidateThreshold: "Consolidate threshold",
-				consolidateThresholdHelp: "References reaching this count add +1 weight (default 3)",
+				consolidateThresholdHelp: "References reaching this count add +1 (default 3)",
 				weightCap: "Weight cap",
-				weightCapHelp: "Max weight after consolidation, prevents runaway growth (default 20)",
+				weightCapHelp: "Max weight (default 20)",
 				hotTokenLimit: "Hot token limit",
-				hotTokenLimitHelp: "Token budget for the session snapshot injection (default 5000)",
-				maxQueryResults: "Max query results",
-				maxQueryResultsHelp: "Max entries returned per query (default 20)",
+				hotTokenLimitHelp: "Snapshot token budget (default 5000)",
+				maxQueryResults: "Max results",
+				maxQueryResultsHelp: "Max entries per query (default 20)",
 				fallback: "Approval fallback",
-				fallbackHelp: "When approval is unavailable (policy never / missing service): auto-save with audit marker, or deny writes (default auto)",
-				fallbackAuto: "Auto-save (recommended)",
-				fallbackDeny: "Deny writes",
-				autoDreamDays: "Auto-dream interval (days, 0=off)",
-				autoDreamDaysHelp: "Run dream at startup if older than this (default 7)",
-				autoReflectDays: "Auto-reflect interval (days, 0=off)",
-				autoReflectDaysHelp: "Run reflection at startup if older than this (default 3)",
-				reset: "Reset to defaults",
-				resetConfirm: "Reset all settings to defaults?",
-				petEndpoint: "Local notify service URL (optional, may be empty)",
-				petEndpointHelp: "Optional URL for a local notification service (may be empty, off by default)",
-				save: "Save config",
+				fallbackHelp: "When approval unavailable: auto-save or deny (default auto)",
+				fallbackAuto: "Auto-save",
+				fallbackDeny: "Deny",
+				autoDreamDays: "Auto-dream (days, 0=off)",
+				autoDreamDaysHelp: "Run dream if older (default 7)",
+				autoReflectDays: "Auto-reflect (days, 0=off)",
+				autoReflectDaysHelp: "Run reflect if older (default 3)",
+				reset: "Reset",
+				resetConfirm: "Reset all settings?",
+				petEndpoint: "Notify service URL (optional)",
+				petEndpointHelp: "Optional local notification URL",
+				save: "Save",
 				saving: "Saving…",
 				saved: "Saved",
 				saveFailed: "Save failed",
-				dream: "Memory metabolism",
+				dream: "Metabolism",
 				runDream: "Run dream",
 				previewDream: "Preview (dry-run)",
 				dreamRunning: "Running…",
-				dreamFailed: "Dream failed",
+				dreamFailed: "Failed",
 				scanned: "Scanned",
 				decayed: "decayed",
 				consolidated: "consolidated",
@@ -160,33 +213,21 @@ window.__ModuleLoader__.load({
 				archived: "archived",
 				backup: "Backup",
 				noItems: "(no items)",
-				audit: "Audit log",
 				runAudit: "Recent audit",
+				auditTitle: "Audit log",
 				auditLoading: "Loading…",
-				auditFailed: "Audit failed",
+				auditFailed: "Failed",
 				noAudit: "(no audit entries)",
-				search: "Search memory (semantic recall)…",
-				searchBtn: "Search",
-				allLayers: "All layers",
-				noEntries: "(no matching entries)",
-				entriesLoading: "Loading knowledge base…",
-				entriesFailed: "Failed to load knowledge base",
-				pin: "Pin",
-				unpin: "Unpin",
-				remove: "Remove",
-				removeConfirm: "Remove this entry? A backup is made first and it can be restored.",
-				weight: "weight",
-				hits: "hits",
-				reflectRun: "Run deep reflection",
+				reflectRun: "Run reflection",
 				reflectPreview: "Preview (dry-run)",
 				reflectRunning: "Reflecting…",
-				reflectFailed: "Reflection failed",
-				clustersTitle: "Topic clusters",
-				conflictsTitle: "Potential conflicts",
+				reflectFailed: "Failed",
+				clustersTitle: "Clusters",
+				conflictsTitle: "Conflicts",
 				forgetTitle: "Forget candidates",
 				reportFile: "Report",
-				previewOnly: "(preview, not written)",
-				noClusters: "(no similar-entry clusters)",
+				previewOnly: "(preview)",
+				noClusters: "(none)",
 				none: "(none)",
 				ops: {
 					decay: "decay",
@@ -207,45 +248,71 @@ window.__ModuleLoader__.load({
 			return primary === "zh-cn" || primary.startsWith("zh-hans") ? copy["zh-CN"] : copy.en;
 		}
 		const inject = ["slots"];
-		// 布局样式：颜色一律走 --dsw-alias-* 令牌（带 fallback），组件本体交给 primitives
+		// 巨构视觉：宣纸/墨 + 金线 + 朱砂
 		const styles = `
-.bm-page{display:flex;flex-direction:column;gap:14px;max-width:760px;color:var(--dsw-alias-label-primary,#1f2328);font-size:14px;line-height:1.6}
-.bm-page h3{margin:0;font-size:18px;font-weight:600}
+.bm-page{display:flex;flex-direction:column;gap:16px;max-width:820px;color:var(--dsw-alias-label-primary,#1C1917);font-size:14px;line-height:1.7}
+.bm-page h3{margin:0;font-size:20px;font-weight:600;letter-spacing:.02em}
 .bm-page h4{margin:0;font-size:14px;font-weight:600}
-.bm-tabs{display:flex;gap:2px;border-bottom:1px solid var(--dsw-alias-border-l2,#d0d7de);padding-bottom:8px}
-.bm-tab{padding:6px 14px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--dsw-alias-label-secondary,#57606a);font-size:13px;cursor:pointer}
-.bm-tab:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(65,118,230,.08))}
-.bm-tab.active{background:var(--dsw-alias-bg-layer-3,#f6f8fa);border-color:var(--dsw-alias-border-l2,#d0d7de);color:var(--dsw-alias-label-primary,#1f2328);font-weight:600}
-.bm-block{padding:14px;border:1px solid var(--dsw-alias-border-l2,#d0d7de);border-radius:12px;background:var(--dsw-alias-bg-layer-3,#fff);display:flex;flex-direction:column;gap:12px}
-.bm-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
-.bm-card{padding:10px 12px;border:1px solid var(--dsw-alias-border-l2,#d0d7de);border-radius:10px;background:var(--dsw-alias-bg-layer-2,#f6f8fa)}
-.bm-card strong{display:block;margin-bottom:2px;font-weight:600;font-size:16px;color:var(--dsw-alias-label-primary,#1f2328)}
-.bm-card span{color:var(--dsw-alias-label-secondary,#57606a);font-size:13px}
-.bm-root{color:var(--dsw-alias-label-tertiary,#6e7781);font-size:13px;word-break:break-all}
+.bm-sub{color:var(--dsw-alias-label-tertiary,#8A857E);font-size:12px;margin-top:2px}
+.bm-tabs{display:flex;gap:4px;border-bottom:1px solid var(--dsw-alias-border-l2,#C9A96A);margin-bottom:2px}
+.bm-tab{padding:7px 14px;border:1px solid transparent;border-bottom:2px solid transparent;border-radius:8px 8px 0 0;background:transparent;color:var(--dsw-alias-label-secondary,#8A857E);font-size:13px;cursor:pointer}
+.bm-tab:hover{color:var(--dsw-alias-label-primary,#1C1917)}
+.bm-tab.active{background:var(--dsw-alias-bg-layer-3,#F5F0EB);border-color:var(--dsw-alias-border-l2,#C9A96A);border-bottom-color:#B45309;color:var(--dsw-alias-label-primary,#1C1917);font-weight:600}
+.bm-block{padding:16px;border:1px solid var(--dsw-alias-border-l2,#C9A96A);border-radius:16px;background:var(--dsw-alias-bg-layer-3,#F5F0EB);display:flex;flex-direction:column;gap:12px}
+.bm-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+.bm-card{padding:12px 14px;border:1px solid var(--dsw-alias-border-l2,#C9A96A);border-radius:12px;background:var(--dsw-alias-bg-layer-2,#FBF8F2);display:flex;flex-direction:column;gap:4px}
+.bm-card .v{font-size:24px;font-weight:600;color:var(--dsw-alias-label-primary,#1C1917)}
+.bm-card .l{color:var(--dsw-alias-label-secondary,#8A857E);font-size:12.5px}
+.bm-card .n{font-size:12px;color:var(--dsw-alias-label-tertiary,#8A857E)}
+.bm-badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:500}
+.bm-badge.gold{background:rgba(180,83,9,.1);color:#B45309}
+.bm-root{color:var(--dsw-alias-label-tertiary,#8A857E);font-size:12.5px;word-break:break-all}
 .bm-config{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
 .bm-field{display:flex;flex-direction:column;gap:4px;min-width:0}
-.bm-field label{color:var(--dsw-alias-label-primary,#1f2328);font-size:13px;font-weight:500}
-.bm-field input[type=number],.bm-field select{height:32px;padding:0 8px;border:1px solid var(--dsw-alias-border-l2,#d0d7de);border-radius:8px;background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-primary,#1f2328);font-size:13px;min-width:0}
-.bm-field input:focus,.bm-field select:focus{outline:none;border-color:#4176e6}
+.bm-field label{color:var(--dsw-alias-label-primary,#1C1917);font-size:13px;font-weight:500}
+.bm-field input[type=number],.bm-field select{height:32px;padding:0 8px;border:1px solid var(--dsw-alias-border-l2,#C9A96A);border-radius:8px;background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-primary,#1C1917);font-size:13px;min-width:0}
 .bm-wide{grid-column:1/-1}
 .bm-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.bm-note{color:var(--dsw-alias-label-secondary,#57606a);font-size:13px}
-.bm-ok{color:#1a7f37}
-.bm-err{color:#cf222e}
+.bm-note{color:var(--dsw-alias-label-secondary,#8A857E);font-size:13px}
+.bm-ok{color:#2E7D32}
+.bm-err{color:#C62828}
 .bm-list{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:4px;max-height:280px;overflow:auto}
-.bm-list li{padding:5px 8px;border-radius:6px;background:var(--dsw-alias-bg-layer-2,#f6f8fa);color:var(--dsw-alias-label-primary,#1f2328);font-family:ui-monospace,Consolas,monospace;font-size:12.5px;word-break:break-all}
-.bm-summary{font-weight:600;color:var(--dsw-alias-label-primary,#1f2328)}
+.bm-list li{padding:5px 8px;border-radius:6px;background:var(--dsw-alias-bg-layer-2,#FBF8F2);color:var(--dsw-alias-label-primary,#1C1917);font-size:12.5px;word-break:break-all}
+.bm-summary{font-weight:600;color:var(--dsw-alias-label-primary,#1C1917)}
 .bm-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.bm-toolbar select{height:32px;padding:0 8px;border:1px solid var(--dsw-alias-border-l2,#d0d7de);border-radius:8px;background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-primary,#1f2328);font-size:13px}
+.bm-toolbar select{height:32px;padding:0 8px;border:1px solid var(--dsw-alias-border-l2,#C9A96A);border-radius:8px;background:var(--dsw-alias-bg-layer-1,#fff);font-size:13px}
 .bm-entries{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px;max-height:520px;overflow:auto}
-.bm-entry{padding:10px 12px;border:1px solid var(--dsw-alias-border-l2,#d0d7de);border-radius:10px;background:var(--dsw-alias-bg-layer-2,#f6f8fa)}
-.bm-entry.pinned{border-color:#c5a468}
-.bm-entry-text{color:var(--dsw-alias-label-primary,#1f2328);font-size:13px;word-break:break-all}
-.bm-entry-meta{display:flex;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap;color:var(--dsw-alias-label-tertiary,#6e7781);font-size:12px;font-family:ui-monospace,Consolas,monospace}
+.bm-entry{padding:10px 12px;border:1px solid var(--dsw-alias-border-l2,#C9A96A);border-radius:10px;background:var(--dsw-alias-bg-layer-2,#FBF8F2)}
+.bm-entry.pinned{border-color:#B45309;background:rgba(180,83,9,.05)}
+.bm-entry-text{color:var(--dsw-alias-label-primary,#1C1917);font-size:13px;word-break:break-all}
+.bm-entry-meta{display:flex;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap;color:var(--dsw-alias-label-tertiary,#8A857E);font-size:12px}
 .bm-entry-ops{display:flex;gap:6px;margin-left:auto;align-items:center}
-.bm-cluster{margin:0;padding:10px 12px;border:1px solid var(--dsw-alias-border-l2,#d0d7de);border-radius:10px;background:var(--dsw-alias-bg-layer-2,#f6f8fa)}
-.bm-cluster-title{font-weight:600;color:var(--dsw-alias-label-primary,#1f2328);font-size:13px;margin-bottom:4px}
-.bm-cluster ul{margin:0;padding-left:18px;color:var(--dsw-alias-label-secondary,#57606a);font-size:13px}
+.bm-cluster{margin:0;padding:10px 12px;border:1px solid var(--dsw-alias-border-l2,#C9A96A);border-radius:10px;background:var(--dsw-alias-bg-layer-2,#FBF8F2)}
+.bm-cluster-title{font-weight:600;color:var(--dsw-alias-label-primary,#1C1917);font-size:13px;margin-bottom:4px}
+.bm-cluster ul{margin:0;padding-left:18px;color:var(--dsw-alias-label-secondary,#8A857E);font-size:13px}
+/* 概览：构成三卡 + 记忆流 */
+.bm-mode-row{display:flex;gap:6px;flex-wrap:wrap}
+.bm-mode-btn{padding:6px 12px;border:1px solid var(--dsw-alias-border-l2,#C9A96A);border-radius:8px;background:var(--dsw-alias-bg-layer-2,#FBF8F2);color:var(--dsw-alias-label-secondary,#8A857E);font-size:12.5px;cursor:pointer}
+.bm-mode-btn.active{border-color:#B45309;background:rgba(180,83,9,.08);color:#B45309;font-weight:600}
+.bm-search-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.bm-search-row input{flex:1;min-width:200px;height:36px;padding:0 12px;border:1px solid var(--dsw-alias-border-l2,#C9A96A);border-radius:10px;background:var(--dsw-alias-bg-layer-1,#fff);font-size:13.5px}
+.bm-search-row input:focus{outline:none;border-color:#B45309}
+.bm-flow-entry{display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid var(--dsw-alias-border-l2,rgba(201,169,106,.35))}
+.bm-flow-entry:last-child{border-bottom:0}
+.bm-flow-mark{flex:none;width:8px;height:8px;border-radius:50%;margin-top:6px;background:var(--dsw-alias-border-l2,#C9A96A)}
+.bm-flow-mark.gold{background:#B45309}
+.bm-flow-text{flex:1;min-width:0}
+.bm-flow-text .t{font-size:13.5px;color:var(--dsw-alias-label-primary,#1C1917);word-break:break-all}
+.bm-flow-text .d{font-size:12px;color:var(--dsw-alias-label-tertiary,#8A857E);margin-top:2px}
+.bm-flow-op{margin-left:auto;flex:none}
+/* 构成图表：行内紧凑条 */
+.bm-chart{display:flex;flex-direction:column;gap:6px;padding:2px 0}
+.bm-chart-row{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--dsw-alias-label-secondary,#8A857E)}
+.bm-chart-row .lbl{width:52px;flex:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bm-chart-row .track{flex:1;max-width:160px;height:8px;border-radius:4px;background:rgba(201,169,106,.18);overflow:hidden}
+.bm-chart-row .fill{height:100%;border-radius:4px;min-width:2px}
+.bm-chart-row .val{width:30px;flex:none;text-align:right;font-family:ui-monospace,Consolas,monospace;color:var(--dsw-alias-label-primary,#1C1917)}
+.bm-chart-row .pct{width:34px;flex:none;text-align:right;color:var(--dsw-alias-label-tertiary,#8A857E)}
 `;
 		const CONFIG_KEYS = ["halfLifeDays", "decayThreshold", "consolidateThreshold", "weightCap", "hotTokenLimit", "maxQueryResults", "autoDreamDays", "autoReflectDays"];
 		const { Button, Input, StateDot, IconSearchOutline16, IconTrashOutline16, IconRefreshOutline14, IconCheckOutline16, IconWarningOutline16, IconThinkOutline14, IconSettingsOutline16, IconLinkOutline14, IconBrowseOutline16 } = prim;
@@ -258,8 +325,9 @@ window.__ModuleLoader__.load({
 			const [saveState, setSaveState] = react.useState(null);
 			const [dream, setDream] = react.useState(null);
 			const [audit, setAudit] = react.useState(null);
-			const [tab, setTab] = react.useState("settings");
+			const [tab, setTab] = react.useState("overview");
 			const [searchText, setSearchText] = react.useState("");
+			const [searchMode, setSearchMode] = react.useState("hybrid");
 			const [layerSel, setLayerSel] = react.useState("");
 			const [knowledge, setKnowledge] = react.useState({ kind: "idle", entries: [] });
 			const [reflect, setReflect] = react.useState(null);
@@ -274,34 +342,23 @@ window.__ModuleLoader__.load({
 					if (!data?.ok) throw new Error("status unavailable");
 					const cfg = data.config || {};
 					const textForm = {};
-					for (const key of CONFIG_KEYS) {
-						textForm[key] = cfg[key] !== void 0 ? String(cfg[key]) : "";
-					}
+					for (const key of CONFIG_KEYS) textForm[key] = cfg[key] !== void 0 ? String(cfg[key]) : "";
 					setConfigText(textForm);
 					setPetEndpoint(data.petEndpoint || "");
 					setFallback(data.config?.approvalFallback || "auto");
 					setStatus({ kind: "ready", value: data });
-				}).catch((error) => {
-					if (!(error instanceof DOMException && error.name === "AbortError")) setStatus({ kind: "error" });
-				});
-				return () => {
-					controller.abort();
-				};
+				}).catch(() => setStatus({ kind: "error" }));
+				return () => controller.abort();
 			}, []);
 			react.useEffect(() => loadStatus(), [loadStatus]);
 			const saveConfig = () => {
 				setSaveState({ kind: "saving" });
 				const body = {};
-				for (const key of CONFIG_KEYS) {
-					const value = configText[key];
-					if (value !== void 0 && value !== "") body[key] = Number(value);
-				}
+				for (const key of CONFIG_KEYS) { const value = configText[key]; if (value !== void 0 && value !== "") body[key] = Number(value); }
 				body.petEndpoint = petEndpoint.trim() !== "" ? petEndpoint.trim() : null;
 				body.approvalFallback = fallback === "deny" ? "deny" : "auto";
 				fetch("/biomemory/api/config", {
-					method: "POST",
-					credentials: "same-origin",
-					headers: { "Content-Type": "application/json" },
+					method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
 					body: JSON.stringify(body)
 				}).then(async (response) => {
 					if (!response.ok) throw new Error("save failed");
@@ -310,17 +367,13 @@ window.__ModuleLoader__.load({
 					if (data.petEndpoint !== void 0) setPetEndpoint(data.petEndpoint || "");
 					setSaveState({ kind: "ok" });
 					loadStatus();
-				}).catch(() => {
-					setSaveState({ kind: "error" });
-				});
+				}).catch(() => setSaveState({ kind: "error" }));
 			};
 			const resetConfig = () => {
 				if (!window.confirm(t.resetConfirm)) return;
 				setSaveState({ kind: "saving" });
 				fetch("/biomemory/api/config", {
-					method: "POST",
-					credentials: "same-origin",
-					headers: { "Content-Type": "application/json" },
+					method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
 					body: JSON.stringify({ reset: true })
 				}).then(async (response) => {
 					if (!response.ok) throw new Error("reset failed");
@@ -333,16 +386,12 @@ window.__ModuleLoader__.load({
 					setConfigText(textForm);
 					setSaveState({ kind: "ok" });
 					loadStatus();
-				}).catch(() => {
-					setSaveState({ kind: "error" });
-				});
+				}).catch(() => setSaveState({ kind: "error" }));
 			};
 			const runDream = (dryRun) => {
 				setDream({ kind: "running", dryRun });
 				fetch("/biomemory/api/dream", {
-					method: "POST",
-					credentials: "same-origin",
-					headers: { "Content-Type": "application/json" },
+					method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
 					body: JSON.stringify({ dryRun })
 				}).then(async (response) => {
 					if (!response.ok) throw new Error("dream failed");
@@ -350,22 +399,17 @@ window.__ModuleLoader__.load({
 					if (!data?.ok) throw new Error("dream failed");
 					setDream({ kind: "done", dryRun, report: data.report || {} });
 					if (!dryRun) loadStatus();
-				}).catch(() => {
-					setDream({ kind: "error", dryRun });
-				});
+				}).catch(() => setDream({ kind: "error", dryRun }));
 			};
 			const runAudit = () => {
 				setAudit({ kind: "loading" });
-				fetch("/biomemory/api/audit?sinceDays=30", {
-					credentials: "same-origin"
-				}).then(async (response) => {
-					if (!response.ok) throw new Error("audit failed");
-					const data = await response.json();
-					if (!data?.ok) throw new Error("audit failed");
-					setAudit({ kind: "done", entries: data.entries || [] });
-				}).catch(() => {
-					setAudit({ kind: "error" });
-				});
+				fetch("/biomemory/api/audit?sinceDays=30", { credentials: "same-origin" })
+					.then(async (response) => {
+						if (!response.ok) throw new Error("audit failed");
+						const data = await response.json();
+						if (!data?.ok) throw new Error("audit failed");
+						setAudit({ kind: "done", entries: data.entries || [] });
+					}).catch(() => setAudit({ kind: "error" }));
 			};
 			const loadEntries = (q, layer) => {
 				const query = q !== void 0 ? q : searchText;
@@ -374,45 +418,37 @@ window.__ModuleLoader__.load({
 				const params = new URLSearchParams();
 				if (query) params.set("q", query);
 				if (lay) params.set("layer", lay);
-				fetch(`/biomemory/api/entries?${params.toString()}`, {
-					credentials: "same-origin"
-				}).then(async (response) => {
-					if (!response.ok) throw new Error("entries failed");
-					const data = await response.json();
-					if (!data?.ok) throw new Error("entries failed");
-					setKnowledge({ kind: "ready", entries: data.entries || [] });
-				}).catch(() => {
-					setKnowledge({ kind: "error", entries: [] });
-				});
+				params.set("mode", searchMode);
+				fetch(`/biomemory/api/entries?${params.toString()}`, { credentials: "same-origin" })
+					.then(async (response) => {
+						if (!response.ok) throw new Error("entries failed");
+						const data = await response.json();
+						if (!data?.ok) throw new Error("entries failed");
+						setKnowledge({ kind: "ready", entries: data.entries || [] });
+					}).catch(() => setKnowledge({ kind: "error", entries: [] }));
 			};
 			const entryOp = (fp, op) => {
 				fetch(`/biomemory/api/entries/${op}`, {
-					method: "POST",
-					credentials: "same-origin",
-					headers: { "Content-Type": "application/json" },
+					method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
 					body: JSON.stringify({ fp })
 				}).then(async (response) => {
 					if (!response.ok) throw new Error(`${op} failed`);
 					const data = await response.json();
 					if (!data?.ok) throw new Error(`${op} failed`);
 					loadEntries();
-				}).catch(() => { /* 保持现状 */ });
+				}).catch(() => {});
 			};
 			const runReflect = (dryRun) => {
 				setReflect({ kind: "running", dryRun });
 				fetch("/biomemory/api/reflect", {
-					method: "POST",
-					credentials: "same-origin",
-					headers: { "Content-Type": "application/json" },
+					method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
 					body: JSON.stringify({ dryRun })
 				}).then(async (response) => {
 					if (!response.ok) throw new Error("reflect failed");
 					const data = await response.json();
 					if (!data?.ok) throw new Error("reflect failed");
 					setReflect({ kind: "done", dryRun, report: data.report || {} });
-				}).catch(() => {
-					setReflect({ kind: "error", dryRun });
-				});
+				}).catch(() => setReflect({ kind: "error", dryRun }));
 			};
 			const opName = (op) => t.ops[op] || op;
 			const layerName = (layer) => t.layers[layer] || layer;
@@ -424,18 +460,68 @@ window.__ModuleLoader__.load({
 			}
 			const stats = status.value.stats || {};
 			const layers = stats.layers || {};
-			const layerCards = Object.keys(layers).map((layer) => (0, react.createElement)("div", {
-				key: layer,
+			const modelReady = !!(stats.model && stats.model.ready);
+			const byType = stats.byType || [];
+			const byWeight = stats.byWeight || [];
+			const audit7d = stats.audit7d || [];
+			// ---------- 概览页 ----------
+			const overviewCards = [
+				[t.total, String(stats.total === void 0 ? "—" : stats.total), t.totalNote, stats.vectors !== void 0 ? `${t.vectorized} ${stats.vectors}/${stats.total}` : ""],
+				[t.pinned, String(stats.pinned === void 0 ? "—" : stats.pinned), t.pinnedNote, ""],
+				[t.model, modelReady ? "512维" : "降级", t.modelNote, modelReady ? t.modelTag : "keyword"],
+				[t.audit, String(stats.auditCount === void 0 ? "—" : stats.auditCount), t.auditNote, byWeight.find((r) => r.key === "10+") ? `10+ 权重 ${byWeight.find((r) => r.key === "10+").count} 条` : ""]
+			].map(([title, value, note, tag]) => (0, react.createElement)("div", {
+				key: title,
 				className: "bm-card"
-			}, (0, react.createElement)("strong", null, String(layers[layer])), (0, react.createElement)("span", null, layerName(layer))));
-			const summaryCards = [
-				["total", stats.total, t.total],
-				["pinned", stats.pinned, t.pinned],
-				["audit", stats.auditCount, t.auditCount]
-			].map(([id, value, label]) => (0, react.createElement)("div", {
+			}, (0, react.createElement)("div", { className: "v" }, value), (0, react.createElement)("div", { className: "l" }, title), note ? (0, react.createElement)("div", { className: "n" }, note) : null, tag ? (0, react.createElement)("span", { className: "bm-badge gold" }, tag) : null));
+			const typeColor = (k) => k === "preference" ? "#B45309" : k === "fact" ? "#8C6B3F" : "#C9A96A";
+			const typeRows = byType.map((r) => {
+				const pct = stats.total ? Math.round(r.count / stats.total * 100) : 0;
+				return (0, react.createElement)("div", { key: r.key, className: "bm-chart-row" }, (0, react.createElement)("span", { className: "lbl" }, r.key), (0, react.createElement)("div", { className: "track" }, (0, react.createElement)("div", { className: "fill", style: { width: pct + "%", background: typeColor(r.key) } })), (0, react.createElement)("span", { className: "val" }, String(r.count)), (0, react.createElement)("span", { className: "pct" }, pct + "%"));
+			});
+			const weightRows = byWeight.map((r) => {
+				const max = Math.max(1, ...byWeight.map((x) => x.count));
+				const pct = Math.round(r.count / max * 100);
+				return (0, react.createElement)("div", { key: r.key, className: "bm-chart-row" }, (0, react.createElement)("span", { className: "lbl" }, r.key === "10+" ? "≥10" : r.key), (0, react.createElement)("div", { className: "track" }, (0, react.createElement)("div", { className: "fill", style: { width: pct + "%", background: r.key === "10+" ? "#B45309" : "#C9A96A" } })), (0, react.createElement)("span", { className: "val" }, String(r.count)), (0, react.createElement)("span", { className: "pct" }, pct + "%"));
+			});
+			const activityItems = audit7d.slice(0, 5).map((r) => {
+				const labels = { RECOVER: "恢复", MIGRATE: "迁移", RECALL: "召回", WRITE: "写入", DECAY: "衰减", ARCHIVE: "归档", CONSOLIDATE: "巩固", CONFLICT: "冲突", PIN: "锁定", UNPIN: "解锁" };
+				return (0, react.createElement)("li", { key: r.key }, `${r.key} ${labels[r.key] || ""} ×${r.count}`);
+			});
+			const compositionSection = (0, react.createElement)("section", { className: "bm-block" }, (0, react.createElement)("h4", null, t.composition), (0, react.createElement)("div", { className: "bm-grid" }, (0, react.createElement)("div", { className: "bm-card" }, (0, react.createElement)("div", { className: "l" }, t.typeDist), (0, react.createElement)("div", { className: "bm-chart" }, typeRows)), (0, react.createElement)("div", { className: "bm-card" }, (0, react.createElement)("div", { className: "l" }, t.weightDist), (0, react.createElement)("div", { className: "bm-chart" }, weightRows)), (0, react.createElement)("div", { className: "bm-card" }, (0, react.createElement)("div", { className: "l" }, t.recentActivity), activityItems.length ? (0, react.createElement)("ul", { className: "bm-list" }, activityItems) : (0, react.createElement)("div", { className: "bm-note" }, t.noAudit))));
+			const modeBtn = (id, label) => (0, react.createElement)("button", {
 				key: id,
-				className: "bm-card"
-			}, (0, react.createElement)("strong", null, String(value === void 0 ? "—" : value)), (0, react.createElement)("span", null, label)));
+				className: searchMode === id ? "bm-mode-btn active" : "bm-mode-btn",
+				onClick: () => {
+					setSearchMode(id);
+					if (searchText) loadEntries(searchText, void 0);
+				}
+			}, label);
+			const flowSection = (0, react.createElement)("section", { className: "bm-block" }, (0, react.createElement)("h4", null, t.flow), (0, react.createElement)("div", { className: "bm-mode-row" }, modeBtn("hybrid", t.modeHybrid), modeBtn("exact", t.modeExact), modeBtn("semantic", t.modeSemantic)), (0, react.createElement)("div", { className: "bm-search-row" }, (0, react.createElement)("input", {
+				type: "text",
+				placeholder: t.searchPlaceholder,
+				value: searchText,
+				onChange: (event) => setSearchText(event.target.value),
+				onKeyDown: (event) => { if (event.key === "Enter") loadEntries(); }
+			}), (0, react.createElement)(Button, { variant: "primary", onClick: () => loadEntries() }, t.searchBtn)), (() => {
+				if (knowledge.kind === "loading") return (0, react.createElement)("div", { className: "bm-note" }, t.entriesLoading);
+				if (knowledge.kind === "error") return (0, react.createElement)("div", { className: "bm-err" }, t.entriesFailed);
+				const entries = knowledge.entries || [];
+				if (entries.length === 0) return (0, react.createElement)("div", { className: "bm-note" }, t.noEntries);
+				return (0, react.createElement)("div", null, entries.slice(0, 8).map((entry) => {
+					const isPinned = !!entry.pinned;
+					return (0, react.createElement)("div", {
+						key: entry.fp,
+						className: "bm-flow-entry"
+					}, (0, react.createElement)("span", { className: "bm-flow-mark" + (isPinned ? " gold" : "") }), (0, react.createElement)("div", { className: "bm-flow-text" }, (0, react.createElement)("div", { className: "t" }, entry.text), (0, react.createElement)("div", { className: "d" }, `${entry.fragment_type || entry.kind || "note"} · 权重 ${entry.weight}${isPinned ? " · 锁定" : ""}`)), (0, react.createElement)("div", { className: "bm-flow-op" }, (0, react.createElement)(Button, {
+						variant: "ghost",
+						size: "sm",
+						onClick: () => entryOp(entry.fp, isPinned ? "unpin" : "pin")
+					}, isPinned ? t.unpin : t.pin)));
+				}));
+			})());
+			const overviewSection = (0, react.createElement)(react.Fragment, null, (0, react.createElement)("div", { className: "bm-grid" }, ...overviewCards), compositionSection, flowSection);
+			// ---------- 设置 ----------
 			const configFields = CONFIG_KEYS.map((key) => {
 				const labels = {
 					halfLifeDays: t.halfLifeDays,
@@ -468,12 +554,8 @@ window.__ModuleLoader__.load({
 			});
 			const dreamSection = (() => {
 				if (dream === null) return null;
-				if (dream.kind === "running") {
-					return (0, react.createElement)("div", { className: "bm-note" }, t.dreamRunning);
-				}
-				if (dream.kind === "error") {
-					return (0, react.createElement)("div", { className: "bm-err" }, `${t.dreamFailed}${dream.dryRun ? " (dry-run)" : ""}`);
-				}
+				if (dream.kind === "running") return (0, react.createElement)("div", { className: "bm-note" }, t.dreamRunning);
+				if (dream.kind === "error") return (0, react.createElement)("div", { className: "bm-err" }, `${t.dreamFailed}${dream.dryRun ? " (dry-run)" : ""}`);
 				const r = dream.report || {};
 				const items = (r.items || []).slice(0, 20);
 				return (0, react.createElement)("div", { className: "bm-actions", style: { flexDirection: "column", alignItems: "stretch", gap: 8 } }, (0, react.createElement)("div", { className: "bm-summary" }, `${t.scanned} ${r.scanned}：${t.decayed} ${r.decayed} · ${t.consolidated} ${r.consolidated} · ${t.conflicted} ${r.conflicted} · ${t.archived} ${r.archived}`), r.backup ? (0, react.createElement)("div", { className: "bm-root" }, `${t.backup}：${r.backup}`) : null, items.length === 0 ? (0, react.createElement)("div", { className: "bm-note" }, t.noItems) : (0, react.createElement)("ul", { className: "bm-list" }, items.map((item, index) => {
@@ -483,20 +565,14 @@ window.__ModuleLoader__.load({
 			})();
 			const auditSection = (() => {
 				if (audit === null) return null;
-				if (audit.kind === "loading") {
-					return (0, react.createElement)("div", { className: "bm-note" }, t.auditLoading);
-				}
-				if (audit.kind === "error") {
-					return (0, react.createElement)("div", { className: "bm-err" }, t.auditFailed);
-				}
+				if (audit.kind === "loading") return (0, react.createElement)("div", { className: "bm-note" }, t.auditLoading);
+				if (audit.kind === "error") return (0, react.createElement)("div", { className: "bm-err" }, t.auditFailed);
 				const entries = (audit.entries || []).slice(0, 20);
-				if (entries.length === 0) {
-					return (0, react.createElement)("div", { className: "bm-note" }, t.noAudit);
-				}
-				return (0, react.createElement)("ul", { className: "bm-list" }, entries.map((entry, index) => (0, react.createElement)("li", { key: index }, `${(entry.t || "").slice(0, 16)} ${entry.event || ""} ${entry.fp || ""} ${entry.text || ""}`)));
+				if (entries.length === 0) return (0, react.createElement)("div", { className: "bm-note" }, t.noAudit);
+				return (0, react.createElement)("ul", { className: "bm-list" }, entries.map((entry, index) => (0, react.createElement)("li", { key: index }, `${(entry.t || "").slice(0, 16)} ${entry.action || entry.event || ""} ${entry.entry_id || entry.fp || ""} ${entry.detail || entry.text || ""}`)));
 			})();
 			const saveNote = saveState === null ? null : saveState.kind === "saving" ? (0, react.createElement)("span", { className: "bm-note" }, t.saving) : saveState.kind === "ok" ? (0, react.createElement)("span", { className: "bm-ok" }, t.saved) : (0, react.createElement)("span", { className: "bm-err" }, t.saveFailed);
-			const settingsSection = (0, react.createElement)(react.Fragment, null, (0, react.createElement)("section", { className: "bm-block" }, (0, react.createElement)("h4", null, t.stats), (0, react.createElement)("div", { className: "bm-grid" }, ...summaryCards, ...layerCards), (0, react.createElement)("div", { className: "bm-root" }, `${t.memoryRoot}：${stats.memoryRoot || ""}`)), (0, react.createElement)("section", { className: "bm-block" }, (0, react.createElement)("h4", null, t.config), (0, react.createElement)("div", { className: "bm-config" }, ...configFields, (0, react.createElement)("div", { className: "bm-field bm-wide" }, (0, react.createElement)("label", null, t.fallback), (0, react.createElement)("select", { value: fallback, onChange: (event) => setFallback(event.target.value) }, (0, react.createElement)("option", { value: "auto" }, t.fallbackAuto), (0, react.createElement)("option", { value: "deny" }, t.fallbackDeny)), (0, react.createElement)("span", { className: "bm-note" }, t.fallbackHelp)), (0, react.createElement)("div", { className: "bm-field bm-wide" }, (0, react.createElement)("label", null, t.petEndpoint), (0, react.createElement)(Input, {
+			const settingsSection = (0, react.createElement)(react.Fragment, null, (0, react.createElement)("section", { className: "bm-block" }, (0, react.createElement)("h4", null, t.config), (0, react.createElement)("div", { className: "bm-config" }, ...configFields, (0, react.createElement)("div", { className: "bm-field bm-wide" }, (0, react.createElement)("label", null, t.fallback), (0, react.createElement)("select", { value: fallback, onChange: (event) => setFallback(event.target.value) }, (0, react.createElement)("option", { value: "auto" }, t.fallbackAuto), (0, react.createElement)("option", { value: "deny" }, t.fallbackDeny)), (0, react.createElement)("span", { className: "bm-note" }, t.fallbackHelp)), (0, react.createElement)("div", { className: "bm-field bm-wide" }, (0, react.createElement)("label", null, t.petEndpoint), (0, react.createElement)(Input, {
 				icon: (0, react.createElement)(IconLinkOutline14, { size: 14 }),
 				type: "text",
 				value: petEndpoint,
@@ -511,7 +587,9 @@ window.__ModuleLoader__.load({
 				variant: "outline",
 				disabled: saveState !== null && saveState.kind === "saving",
 				onClick: resetConfig
-			}, t.reset), saveNote)), (0, react.createElement)("section", { className: "bm-block" }, (0, react.createElement)("h4", null, t.dream), (0, react.createElement)("div", { className: "bm-actions" }, (0, react.createElement)(Button, {
+			}, t.reset), saveNote)), stats.dbPath ? (0, react.createElement)("div", { className: "bm-root" }, `SQLite：${stats.dbPath}`) : null, stats.migration && stats.migration.migrated ? (0, react.createElement)("div", { className: "bm-note" }, `Markdown 已迁移至 SQLite（${(stats.migration.migratedAt || "").slice(0, 16)}）`) : null);
+			// ---------- 代谢 ----------
+			const metabolismSection = (0, react.createElement)(react.Fragment, null, (0, react.createElement)("section", { className: "bm-block" }, (0, react.createElement)("h4", null, t.dream), (0, react.createElement)("div", { className: "bm-actions" }, (0, react.createElement)(Button, {
 				variant: "primary",
 				disabled: dream !== null && dream.kind === "running",
 				onClick: () => runDream(false)
@@ -519,26 +597,21 @@ window.__ModuleLoader__.load({
 				variant: "outline",
 				disabled: dream !== null && dream.kind === "running",
 				onClick: () => runDream(true)
-			}, t.previewDream)), dreamSection), (0, react.createElement)("section", { className: "bm-block" }, (0, react.createElement)("h4", null, t.audit), (0, react.createElement)("div", { className: "bm-actions" }, (0, react.createElement)(Button, {
+			}, t.previewDream)), dreamSection), (0, react.createElement)("section", { className: "bm-block" }, (0, react.createElement)("h4", null, t.auditTitle), (0, react.createElement)("div", { className: "bm-actions" }, (0, react.createElement)(Button, {
 				variant: "outline",
 				disabled: audit !== null && audit.kind === "loading",
 				onClick: runAudit
 			}, (0, react.createElement)(IconRefreshOutline14, { size: 14 }), " ", t.runAudit)), auditSection));
+			// ---------- 知识库 ----------
 			const layerOptions = Object.keys(layers).sort().map((layer) => (0, react.createElement)("option", { key: layer, value: layer }, layerName(layer)));
 			const knowledgeBody = (() => {
-				if (knowledge.kind === "loading") {
-					return (0, react.createElement)("div", { className: "bm-note" }, t.entriesLoading);
-				}
-				if (knowledge.kind === "error") {
-					return (0, react.createElement)("div", { className: "bm-err" }, t.entriesFailed);
-				}
-				if (knowledge.kind === "idle" || knowledge.entries.length === 0) {
-					return (0, react.createElement)("div", { className: "bm-note" }, t.noEntries);
-				}
+				if (knowledge.kind === "loading") return (0, react.createElement)("div", { className: "bm-note" }, t.entriesLoading);
+				if (knowledge.kind === "error") return (0, react.createElement)("div", { className: "bm-err" }, t.entriesFailed);
+				if (knowledge.kind === "idle" || knowledge.entries.length === 0) return (0, react.createElement)("div", { className: "bm-note" }, t.noEntries);
 				return (0, react.createElement)("ul", { className: "bm-entries" }, knowledge.entries.map((entry) => (0, react.createElement)("li", {
 					key: entry.fp,
 					className: entry.pinned ? "bm-entry pinned" : "bm-entry"
-				}, (0, react.createElement)("div", { className: "bm-entry-text" }, entry.text), (0, react.createElement)("div", { className: "bm-entry-meta" }, (0, react.createElement)("span", null, `[${layerName(entry.layer)}]`), entry.pinned ? (0, react.createElement)("span", { className: "bm-ok" }, "PIN") : null, entry.mode ? (0, react.createElement)("span", null, entry.mode) : null, (0, react.createElement)("span", null, `${t.weight} ${entry.weight}`), (0, react.createElement)("span", null, `${t.hits} ${entry.hits}`), entry.ts ? (0, react.createElement)("span", null, entry.ts) : null, (0, react.createElement)("span", { className: "bm-entry-ops" }, (0, react.createElement)(Button, {
+				}, (0, react.createElement)("div", { className: "bm-entry-text" }, entry.text), (0, react.createElement)("div", { className: "bm-entry-meta" }, (0, react.createElement)("span", null, `[${layerName(entry.layer)}]`), entry.pinned ? (0, react.createElement)("span", { className: "bm-ok" }, "PIN") : null, entry.mode ? (0, react.createElement)("span", null, entry.mode) : null, (0, react.createElement)("span", null, `${t.weight} ${entry.weight}`), (0, react.createElement)("span", null, `${t.hits} ${entry.hits}`), (0, react.createElement)("span", { className: "bm-entry-ops" }, (0, react.createElement)(Button, {
 					variant: "ghost",
 					size: "sm",
 					onClick: () => entryOp(entry.fp, entry.pinned ? "unpin" : "pin")
@@ -550,15 +623,13 @@ window.__ModuleLoader__.load({
 					}
 				}, (0, react.createElement)(IconTrashOutline16, { size: 14 }), " ", t.remove))))));
 			})();
-			const knowledgeSection = (0, react.createElement)("section", { className: "bm-block" }, (0, react.createElement)("h4", null, (0, react.createElement)(IconBrowseOutline16, { size: 14 }), " ", t.tabKnowledge), (0, react.createElement)("div", { className: "bm-toolbar" }, (0, react.createElement)(Input, {
+			const knowledgeSection = (0, react.createElement)("section", { className: "bm-block" }, (0, react.createElement)("h4", null, (0, react.createElement)(IconBrowseOutline16, { size: 14 }), " ", t.tabKnowledge), (0, react.createElement)("div", { className: "bm-mode-row" }, modeBtn("hybrid", t.modeHybrid), modeBtn("exact", t.modeExact), modeBtn("semantic", t.modeSemantic)), (0, react.createElement)("div", { className: "bm-toolbar" }, (0, react.createElement)(Input, {
 				icon: (0, react.createElement)(IconSearchOutline16, { size: 14 }),
 				type: "text",
-				placeholder: t.search,
+				placeholder: t.searchPlaceholder,
 				value: searchText,
 				onChange: (event) => setSearchText(event.target.value),
-				onKeyDown: (event) => {
-					if (event.key === "Enter") loadEntries();
-				},
+				onKeyDown: (event) => { if (event.key === "Enter") loadEntries(); },
 				style: { flex: 1, minWidth: 180 }
 			}), (0, react.createElement)("select", {
 				value: layerSel,
@@ -567,21 +638,16 @@ window.__ModuleLoader__.load({
 				variant: "primary",
 				onClick: () => loadEntries()
 			}, t.searchBtn)), knowledgeBody);
+			// ---------- 反思 ----------
 			const reflectBody = (() => {
-				if (reflect === null) {
-					return (0, react.createElement)("div", { className: "bm-note" }, t.reflectRun);
-				}
-				if (reflect.kind === "running") {
-					return (0, react.createElement)("div", { className: "bm-note" }, t.reflectRunning);
-				}
-				if (reflect.kind === "error") {
-					return (0, react.createElement)("div", { className: "bm-err" }, t.reflectFailed);
-				}
+				if (reflect === null) return (0, react.createElement)("div", { className: "bm-note" }, t.reflectRun);
+				if (reflect.kind === "running") return (0, react.createElement)("div", { className: "bm-note" }, t.reflectRunning);
+				if (reflect.kind === "error") return (0, react.createElement)("div", { className: "bm-err" }, t.reflectFailed);
 				const r = reflect.report || {};
 				const clusters = r.clusters || [];
 				const conflicts = r.conflicts || [];
 				const forget = r.forget || [];
-				const summary = `${t.scanned} ${r.scanned}：${t.clustersTitle} ${clusters.length} · ${t.conflictsTitle} ${conflicts.length} · ${t.forgetTitle} ${forget.length} · 近 7 天写入 ${r.recent7}（上周 ${r.prev7}）`;
+				const summary = `${t.scanned} ${r.scanned}：${t.clustersTitle} ${clusters.length} · ${t.conflictsTitle} ${conflicts.length} · ${t.forgetTitle} ${forget.length}`;
 				const clusterNodes = clusters.map((c, index) => (0, react.createElement)("div", {
 					key: index,
 					className: "bm-cluster"
@@ -603,7 +669,14 @@ window.__ModuleLoader__.load({
 				className: tab === id ? "bm-tab active" : "bm-tab",
 				onClick: () => setTab(id)
 			}, icon ? (0, react.createElement)(react.Fragment, null, icon, " ") : null, label);
-			return (0, react.createElement)("div", { className: "bm-page" }, (0, react.createElement)("style", null, styles), (0, react.createElement)("h3", null, t.title), (0, react.createElement)("div", { className: "bm-tabs" }, tabBtn("settings", t.tabSettings, (0, react.createElement)(IconSettingsOutline16, { size: 14 })), tabBtn("knowledge", t.tabKnowledge, (0, react.createElement)(IconBrowseOutline16, { size: 14 })), tabBtn("reflect", t.tabReflect, (0, react.createElement)(IconThinkOutline14, { size: 14 }))), tab === "settings" ? settingsSection : tab === "knowledge" ? knowledgeSection : reflectSection);
+			const iconMap = {
+				overview: (0, react.createElement)(IconBrowseOutline16, { size: 14 }),
+				knowledge: (0, react.createElement)(IconSearchOutline16, { size: 14 }),
+				metabolism: (0, react.createElement)(IconRefreshOutline14, { size: 14 }),
+				reflect: (0, react.createElement)(IconThinkOutline14, { size: 14 }),
+				settings: (0, react.createElement)(IconSettingsOutline16, { size: 14 })
+			};
+			return (0, react.createElement)("div", { className: "bm-page" }, (0, react.createElement)("style", null, styles), (0, react.createElement)("div", null, (0, react.createElement)("h3", null, t.title), (0, react.createElement)("div", { className: "bm-sub" }, t.subtitle)), (0, react.createElement)("div", { className: "bm-tabs" }, tabBtn("overview", t.tabOverview, iconMap.overview), tabBtn("knowledge", t.tabKnowledge, iconMap.knowledge), tabBtn("metabolism", t.tabMetabolism, iconMap.metabolism), tabBtn("reflect", t.tabReflect, iconMap.reflect), tabBtn("settings", t.tabSettings, iconMap.settings)), tab === "overview" ? overviewSection : tab === "knowledge" ? knowledgeSection : tab === "metabolism" ? metabolismSection : tab === "reflect" ? reflectSection : settingsSection);
 		}
 		function apply(ctx) {
 			ctx.effect(() => ctx.slots.inject("settings.section", () => ctx.slots.register({
