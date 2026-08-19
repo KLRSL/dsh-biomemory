@@ -4,6 +4,11 @@
 
 A cross-session memory plugin for DeepSeek Harness (DSH), designed like a human brain: layered memory, graded approval, memory metabolism, fully transparent.
 
+**v0.5.1 (2026-08-20) — pet bridge extracted:**
+
+- The DSH↔desktop-pet bridge (session/event state forwarding + approval panel) moved out to its own plugin `dsh-whale-pet-bridge` — biomemory now only handles memory (save notifications to the pet are kept).
+- No functional changes to memory features.
+
 **v0.5 (2026-08-19) — SQLite + semantic retrieval:**
 
 - **SQLite data layer** (`~/.dsh/biomemory/biomemory.db`, Node 24 built-in `node:sqlite`, WAL mode, zero external deps) — L2/L3 structured entries + vector blobs + audit log

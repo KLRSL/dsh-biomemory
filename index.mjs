@@ -1265,23 +1265,6 @@ function dbgLog(msg) {
   } catch { /* ignore */ }
 }
 
-// 事件节流：assistant/chunk 每 2 秒最多转发一次
-const CHUNK_THROTTLE_MS = 2000
-let _lastChunkAt = 0
-
-function petEvent(type, meta) {
-  if (!PET_ENDPOINT) return
-  try {
-    if (type === 'assistant/chunk') {
-      const now = Date.now()
-      if (now - _lastChunkAt < CHUNK_THROTTLE_MS) return
-      _lastChunkAt = now
-    }
-    dbgLog(`→ petEvent(${type})`)
-    petRequest('/event', JSON.stringify({ type, ...meta }), 800)
-  } catch { /* ignore */ }
-}
-
 // 读取请求体（Web API 用）
 function readBody(req) {
   return new Promise((resolve, reject) => {
@@ -1509,42 +1492,6 @@ export function apply(ctx, config = {}) {
     },
   }), 'dsh-biomemory: settings web API')
   })
-
-  // 5. DSH 事件 → 桌宠状态机（默认关闭）
-  ctx.on('session/event', (session, rawEvent) => {
-    const ev = rawEvent ?? {}
-    const evType = typeof ev.type === 'string' ? ev.type : ''
-    const sessionId = session?.id ?? session?.sessionId
-    const data = ev.data ?? {}
-    const reason = data?.reason?.kind ?? data?.reason
-    dbgLog(`session/event → ${evType} (session=${sessionId ?? '?'})`)
-    switch (evType) {
-      case 'step/start':
-        petEvent('step/start', { sessionId })
-        break
-      case 'assistant/chunk': {
-        const ct = data?.chunk?.type
-        if (ct === 'text-delta' || ct === 'reasoning-delta' || ct === 'tool-call-delta') {
-          petEvent('assistant/chunk', { sessionId })
-        }
-        break
-      }
-      case 'tool/call':
-        petEvent('tool/call', { toolName: data?.name, sessionId })
-        break
-      case 'turn/end':
-        if (typeof reason === 'string') petEvent('turn/end', { reason, sessionId })
-        break
-      case 'approval/asked':
-        petEvent('approval/asked', { sessionId })
-        break
-      case 'approval/decided':
-        petEvent('approval/decided', { sessionId })
-        break
-      default:
-        break
-    }
-  }, { global: true })
 }
 
 // ---------- 测试用内部接口（不参与 DSH 装配） ----------
