@@ -2,19 +2,28 @@
 
 > [中文文档](README.zh-CN.md) · [English](README.md)
 
-A cross-session memory plugin for DeepSeek Harness (DSH), designed like a human brain: layered memory, graded approval, memory metabolism, fully transparent and editable.
+A cross-session memory plugin for DeepSeek Harness (DSH), designed like a human brain: layered memory, graded approval, memory metabolism, fully transparent.
 
-- Plain Markdown data layer (default `~/.dsh/memory`, overridable via the `DSH_MEMORY_ROOT` env var) — human-readable, edit-and-take-effect
+**v0.5 (2026-08-19) — SQLite + semantic retrieval:**
+
+- **SQLite data layer** (`~/.dsh/biomemory/biomemory.db`, Node 24 built-in `node:sqlite`, WAL mode, zero external deps) — L2/L3 structured entries + vector blobs + audit log
+- **Offline embedding model** (`bge-small-zh-v1.5`, 512-dim, quantized ONNX ~24MB at `~/.dsh/models/`) via transformers.js — pure JS, no native modules
+- **Three retrieval modes**: `exact` (keyword) / `semantic` (vector) / `hybrid` (default, Reciprocal Rank Fusion per v0.5 design doc §3.4)
+- **Automatic Markdown migration**: existing `~/.dsh/memory` entries imported once on first boot (Markdown kept as read-only backup)
+- **Audit aggregation** (P1-003): group by action / day / entry
+- **Dream checkpointing** (P0-002): resume interrupted metabolism from the last checkpoint
+- Graceful degradation: model unavailable → keyword retrieval only; memory features unaffected
+
+Core features (unchanged from v0.4):
+
 - `memory` tool: add / query / remove / list / pin / unpin / dream / audit
 - **Frozen snapshot injection** at session start (pinned memories and user preferences at top priority, then recent knowledge/behavior)
 - **Graded approval gate**: important memories (preferences/decisions/lessons) require human approval; ordinary facts are auto-saved; fails closed when no approval channel is available
-- Audit: human-readable `audit.log` (legacy, compatible) + structured `audit.jsonl` (JSON Lines) — every event traceable
 - `/memory` command: list / query / add / remove / pin / unpin / dream / audit
 - `memory_recall` tool: cross-session recall ("do you remember…" scenarios)
 - Deduplication: content fingerprint skips duplicate entries
-- **Memory metabolism** (`/memory dream`): half-life decay, reference consolidation, conflict arbitration, low-weight archiving — with automatic backup & rollback
+- **Memory metabolism** (`/memory dream`): half-life decay, reference consolidation, conflict arbitration, cold archiving (status flag, never deleted)
 - **Memory pins**: lock a memory so it never decays and always enters the snapshot
-- **Semantic retrieval**: pure-JS TF-IDF + cosine — no native modules, no external dependencies
 
 ## Install
 
