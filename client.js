@@ -58,6 +58,14 @@ window.__ModuleLoader__.load({
 				unpin: "解锁",
 				remove: "删除",
 				removeConfirm: "确定删除这条记忆？会自动备份，可回滚。",
+				removedNote: "已删除（自动备份，可回滚）",
+				undo: "撤销",
+				edit: "编辑",
+				saveEdit: "保存",
+				cancel: "取消",
+				editPlaceholder: "修改记忆内容…",
+				conflictBadge: "⚠ 与偏好冲突",
+				resolveHint: "保存后该条从冲突列表移除；重新执行反思可刷新完整列表",
 				weight: "权重",
 				hits: "引用",
 				config: "系统配置",
@@ -170,6 +178,14 @@ window.__ModuleLoader__.load({
 				unpin: "Unpin",
 				remove: "Remove",
 				removeConfirm: "Remove this entry? A backup is made first.",
+				removedNote: "Removed (backed up, restorable)",
+				undo: "Undo",
+				edit: "Edit",
+				saveEdit: "Save",
+				cancel: "Cancel",
+				editPlaceholder: "Edit memory content…",
+				conflictBadge: "⚠ conflicts with preference",
+				resolveHint: "Saving removes it from the list; re-run reflect to refresh",
 				weight: "weight",
 				hits: "hits",
 				config: "Configuration",
@@ -284,10 +300,20 @@ window.__ModuleLoader__.load({
 .bm-entries{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px;max-height:520px;overflow:auto}
 .bm-entry{padding:10px 12px;border:1px solid var(--dsw-alias-border-l2,#C9A96A);border-radius:10px;background:var(--dsw-alias-bg-layer-2,#FBF8F2)}
 .bm-entry.pinned{border-color:#B45309;background:rgba(180,83,9,.05)}
+.bm-entry.conflict{border-color:#DC2626;background:rgba(220,38,38,.06);box-shadow:inset 3px 0 0 #DC2626}
 .bm-entry-text{color:var(--dsw-alias-label-primary,#1C1917);font-size:13px;word-break:break-all}
+.bm-badge-conflict{display:inline-block;margin-right:6px;padding:1px 8px;border-radius:999px;background:rgba(220,38,38,.12);color:#DC2626;font-size:11.5px;font-weight:600;vertical-align:1px}
+.bm-entry-edit{display:flex;flex-direction:column;gap:6px;flex:1;min-width:0;width:100%}
+.bm-conflict-item .bm-entry-edit{flex:1 1 100%;min-width:0}
+.bm-entry-textarea{width:100%;min-height:96px;padding:10px 12px;border:1px solid var(--dsw-alias-border-l2,#C9A96A);border-radius:8px;background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-primary,#1C1917);font-size:15px;line-height:1.7;font-family:inherit;resize:vertical;box-sizing:border-box}
+.bm-entry-textarea:focus{outline:none;border-color:#B45309}
 .bm-entry-meta{display:flex;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap;color:var(--dsw-alias-label-tertiary,#8A857E);font-size:12px}
 .bm-entry-ops{display:flex;gap:6px;margin-left:auto;align-items:center}
 .bm-cluster{margin:0;padding:10px 12px;border:1px solid var(--dsw-alias-border-l2,#C9A96A);border-radius:10px;background:var(--dsw-alias-bg-layer-2,#FBF8F2)}
+.bm-conflict-item{display:flex;flex-wrap:wrap;align-items:flex-start;gap:10px;padding:8px 10px;border:1px solid rgba(220,38,38,.35);border-radius:8px;background:rgba(220,38,38,.05)}
+.bm-undo-bar{display:flex;align-items:center;gap:12px;padding:8px 12px;border:1px solid var(--dsw-alias-border-l2,#C9A96A);border-radius:8px;background:var(--dsw-alias-bg-layer-2,#FBF8F2);font-size:12.5px;color:var(--dsw-alias-label-secondary,#8A857E)}
+.bm-conflict-item + .bm-conflict-item{margin-top:6px}
+.bm-conflict-text{flex:1;min-width:0;font-size:13px;color:#B91C1C;word-break:break-all}
 .bm-cluster-title{font-weight:600;color:var(--dsw-alias-label-primary,#1C1917);font-size:13px;margin-bottom:4px}
 .bm-cluster ul{margin:0;padding-left:18px;color:var(--dsw-alias-label-secondary,#8A857E);font-size:13px}
 /* 概览：构成三卡 + 记忆流 */
@@ -301,6 +327,7 @@ window.__ModuleLoader__.load({
 .bm-flow-entry:last-child{border-bottom:0}
 .bm-flow-mark{flex:none;width:8px;height:8px;border-radius:50%;margin-top:6px;background:var(--dsw-alias-border-l2,#C9A96A)}
 .bm-flow-mark.gold{background:#B45309}
+.bm-flow-mark.red{background:#DC2626}
 .bm-flow-text{flex:1;min-width:0}
 .bm-flow-text .t{font-size:13.5px;color:var(--dsw-alias-label-primary,#1C1917);word-break:break-all}
 .bm-flow-text .d{font-size:12px;color:var(--dsw-alias-label-tertiary,#8A857E);margin-top:2px}
@@ -331,6 +358,9 @@ window.__ModuleLoader__.load({
 			const [layerSel, setLayerSel] = react.useState("");
 			const [knowledge, setKnowledge] = react.useState({ kind: "idle", entries: [] });
 			const [reflect, setReflect] = react.useState(null);
+			const [editingFp, setEditingFp] = react.useState(null);
+			const [editingText, setEditingText] = react.useState("");
+			const [lastRemoved, setLastRemoved] = react.useState(null);
 			const loadStatus = react.useCallback(() => {
 				const controller = new AbortController();
 				fetch("/biomemory/api/status", {
@@ -427,14 +457,85 @@ window.__ModuleLoader__.load({
 						setKnowledge({ kind: "ready", entries: data.entries || [] });
 					}).catch(() => setKnowledge({ kind: "error", entries: [] }));
 			};
-			const entryOp = (fp, op) => {
+			const entryOp = (fp, op, text) => {
+				const body = { fp };
+				if (text !== void 0) body.text = text;
 				fetch(`/biomemory/api/entries/${op}`, {
 					method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ fp })
+					body: JSON.stringify(body)
 				}).then(async (response) => {
 					if (!response.ok) throw new Error(`${op} failed`);
 					const data = await response.json();
 					if (!data?.ok) throw new Error(`${op} failed`);
+					if (op === "update") { setEditingFp(null); setEditingText(""); }
+					loadEntries();
+				}).catch(() => {});
+			};
+			const startEdit = (entry) => { setEditingFp(entry.fp); setEditingText(entry.text); };
+			const cancelEdit = () => { setEditingFp(null); setEditingText(""); };
+			// 编辑框横向形态：宽度撑满整行（flex 收缩修复），高度适中，长文本按行数自适应
+			const editBoxStyle = () => ({
+				minHeight: 96,
+				height: Math.max(96, Math.min(260, Math.ceil(editingText.length / 45) * 26 + 30)),
+				fontSize: 15,
+				lineHeight: 1.7
+			});
+			// 反思页裁决冲突：就地编辑保存 → 从冲突列表移除（改掉冲突内容后不再冲突）
+			const resolveConflict = (fp, text) => {
+				if (!String(text || "").trim()) return;
+				fetch("/biomemory/api/entries/update", {
+					method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ fp, text: String(text).trim() })
+				}).then(async (response) => {
+					if (!response.ok) throw new Error("update failed");
+					const data = await response.json();
+					if (!data?.ok) throw new Error("update failed");
+					setReflect((prev) => {
+						if (!prev || prev.kind !== "done") return prev;
+						const report = { ...prev.report, conflicts: (prev.report.conflicts || []).filter((c) => c.fp !== fp) };
+						return { ...prev, report };
+					});
+					setEditingFp(null); setEditingText("");
+					loadEntries();
+				}).catch(() => {});
+			};
+			// 反思页删除冲突条目（仅限潜在冲突列表）：先备份可回滚，删除后从列表移除
+			const removeConflict = (fp, text) => {
+				fetch("/biomemory/api/entries/remove", {
+					method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ fp })
+				}).then(async (response) => {
+					if (!response.ok) throw new Error("remove failed");
+					const data = await response.json();
+					if (!data?.ok) throw new Error("remove failed");
+					setReflect((prev) => {
+						if (!prev || prev.kind !== "done") return prev;
+						const report = { ...prev.report, conflicts: (prev.report.conflicts || []).filter((c) => c.fp !== fp) };
+						return { ...prev, report };
+					});
+					setEditingFp(null); setEditingText("");
+					setLastRemoved({ fp, text: String(text || "").slice(0, 60) });
+					loadEntries();
+				}).catch(() => {});
+			};
+			// 撤销删除：从备份回滚单条目，加回冲突列表
+			const undoRemove = () => {
+				if (!lastRemoved) return;
+				const fp = lastRemoved.fp;
+				fetch("/biomemory/api/entries/restore", {
+					method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ fp })
+				}).then(async (response) => {
+					if (!response.ok) throw new Error("restore failed");
+					const data = await response.json();
+					if (!data?.ok) throw new Error("restore failed");
+					setReflect((prev) => {
+						if (!prev || prev.kind !== "done") return prev;
+						const conflicts = prev.report.conflicts || [];
+						if (conflicts.some((c) => c.fp === fp)) return prev;
+						return { ...prev, report: { ...prev.report, conflicts: [...conflicts, { layer: data.layer || "hot/behavior", fp, text: data.text }] } };
+					});
+					setLastRemoved(null);
 					loadEntries();
 				}).catch(() => {});
 			};
@@ -510,10 +611,11 @@ window.__ModuleLoader__.load({
 				if (entries.length === 0) return (0, react.createElement)("div", { className: "bm-note" }, t.noEntries);
 				return (0, react.createElement)("div", null, entries.slice(0, 8).map((entry) => {
 					const isPinned = !!entry.pinned;
+					const isConflict = entry.status === "conflict";
 					return (0, react.createElement)("div", {
 						key: entry.fp,
 						className: "bm-flow-entry"
-					}, (0, react.createElement)("span", { className: "bm-flow-mark" + (isPinned ? " gold" : "") }), (0, react.createElement)("div", { className: "bm-flow-text" }, (0, react.createElement)("div", { className: "t" }, entry.text), (0, react.createElement)("div", { className: "d" }, `${entry.fragment_type || entry.kind || "note"} · 权重 ${entry.weight}${isPinned ? " · 锁定" : ""}`)), (0, react.createElement)("div", { className: "bm-flow-op" }, (0, react.createElement)(Button, {
+					}, (0, react.createElement)("span", { className: "bm-flow-mark" + (isPinned ? " gold" : "") + (isConflict ? " red" : "") }), (0, react.createElement)("div", { className: "bm-flow-text" }, (0, react.createElement)("div", { className: "t" }, isConflict ? (0, react.createElement)("span", { className: "bm-badge-conflict" }, t.conflictBadge) : null, entry.text), (0, react.createElement)("div", { className: "d" }, `${entry.fragment_type || entry.kind || "note"} · 权重 ${entry.weight}${isPinned ? " · 锁定" : ""}`)), (0, react.createElement)("div", { className: "bm-flow-op" }, (0, react.createElement)(Button, {
 						variant: "ghost",
 						size: "sm",
 						onClick: () => entryOp(entry.fp, isPinned ? "unpin" : "pin")
@@ -608,20 +710,41 @@ window.__ModuleLoader__.load({
 				if (knowledge.kind === "loading") return (0, react.createElement)("div", { className: "bm-note" }, t.entriesLoading);
 				if (knowledge.kind === "error") return (0, react.createElement)("div", { className: "bm-err" }, t.entriesFailed);
 				if (knowledge.kind === "idle" || knowledge.entries.length === 0) return (0, react.createElement)("div", { className: "bm-note" }, t.noEntries);
-				return (0, react.createElement)("ul", { className: "bm-entries" }, knowledge.entries.map((entry) => (0, react.createElement)("li", {
-					key: entry.fp,
-					className: entry.pinned ? "bm-entry pinned" : "bm-entry"
-				}, (0, react.createElement)("div", { className: "bm-entry-text" }, entry.text), (0, react.createElement)("div", { className: "bm-entry-meta" }, (0, react.createElement)("span", null, `[${layerName(entry.layer)}]`), entry.pinned ? (0, react.createElement)("span", { className: "bm-ok" }, "PIN") : null, entry.mode ? (0, react.createElement)("span", null, entry.mode) : null, (0, react.createElement)("span", null, `${t.weight} ${entry.weight}`), (0, react.createElement)("span", null, `${t.hits} ${entry.hits}`), (0, react.createElement)("span", { className: "bm-entry-ops" }, (0, react.createElement)(Button, {
-					variant: "ghost",
-					size: "sm",
-					onClick: () => entryOp(entry.fp, entry.pinned ? "unpin" : "pin")
-				}, entry.pinned ? t.unpin : t.pin), (0, react.createElement)(Button, {
-					variant: "ghost",
-					size: "sm",
-					onClick: () => {
-						if (window.confirm(`${t.removeConfirm}\n\n${entry.text.slice(0, 80)}`)) entryOp(entry.fp, "remove");
-					}
-				}, (0, react.createElement)(IconTrashOutline16, { size: 14 }), " ", t.remove))))));
+				return (0, react.createElement)("ul", { className: "bm-entries" }, knowledge.entries.map((entry) => {
+					const isConflict = entry.status === "conflict";
+					const isEditing = editingFp === entry.fp;
+					return (0, react.createElement)("li", {
+						key: entry.fp,
+						className: "bm-entry" + (entry.pinned ? " pinned" : "") + (isConflict ? " conflict" : "")
+					}, isEditing ? (0, react.createElement)("div", { className: "bm-entry-edit" }, (0, react.createElement)("textarea", {
+						className: "bm-entry-textarea",
+						style: editBoxStyle(),
+						value: editingText,
+						onChange: (event) => setEditingText(event.target.value)
+					}), (0, react.createElement)("div", { className: "bm-entry-ops" }, (0, react.createElement)(Button, {
+						variant: "primary",
+						size: "sm",
+						onClick: () => { if (editingText.trim()) entryOp(entry.fp, "update", editingText.trim()); }
+					}, t.saveEdit), (0, react.createElement)(Button, {
+						variant: "ghost",
+						size: "sm",
+						onClick: cancelEdit
+					}, t.cancel))) : (0, react.createElement)("div", { className: "bm-entry-text" }, entry.text), (0, react.createElement)("div", { className: "bm-entry-meta" }, (0, react.createElement)("span", null, `[${layerName(entry.layer)}]`), entry.pinned ? (0, react.createElement)("span", { className: "bm-ok" }, "PIN") : null, isConflict ? (0, react.createElement)("span", { className: "bm-badge-conflict" }, t.conflictBadge) : null, entry.mode ? (0, react.createElement)("span", null, entry.mode) : null, (0, react.createElement)("span", null, `${t.weight} ${entry.weight}`), (0, react.createElement)("span", null, `${t.hits} ${entry.hits}`), (0, react.createElement)("span", { className: "bm-entry-ops" }, (0, react.createElement)(Button, {
+						variant: "ghost",
+						size: "sm",
+						onClick: () => entryOp(entry.fp, entry.pinned ? "unpin" : "pin")
+					}, entry.pinned ? t.unpin : t.pin), (0, react.createElement)(Button, {
+						variant: "ghost",
+						size: "sm",
+						onClick: () => startEdit(entry)
+					}, t.edit), (0, react.createElement)(Button, {
+						variant: "ghost",
+						size: "sm",
+						onClick: () => {
+							if (window.confirm(`${t.removeConfirm}\n\n${entry.text.slice(0, 80)}`)) entryOp(entry.fp, "remove");
+						}
+					}, (0, react.createElement)(IconTrashOutline16, { size: 14 }), " ", t.remove))));
+				}));
 			})();
 			const knowledgeSection = (0, react.createElement)("section", { className: "bm-block" }, (0, react.createElement)("h4", null, (0, react.createElement)(IconBrowseOutline16, { size: 14 }), " ", t.tabKnowledge), (0, react.createElement)("div", { className: "bm-mode-row" }, modeBtn("hybrid", t.modeHybrid), modeBtn("exact", t.modeExact), modeBtn("semantic", t.modeSemantic)), (0, react.createElement)("div", { className: "bm-toolbar" }, (0, react.createElement)(Input, {
 				icon: (0, react.createElement)(IconSearchOutline16, { size: 14 }),
@@ -652,9 +775,39 @@ window.__ModuleLoader__.load({
 					key: index,
 					className: "bm-cluster"
 				}, (0, react.createElement)("div", { className: "bm-cluster-title" }, `${t.clustersTitle} ${index + 1}（${c.size} 条）`), (0, react.createElement)("ul", null, c.members.map((m, mi) => (0, react.createElement)("li", { key: mi }, `[${layerName(m.layer)}] ${m.text}`)))));
-				const conflictNodes = conflicts.length ? (0, react.createElement)("ul", { className: "bm-list" }, conflicts.map((c, index) => (0, react.createElement)("li", { key: index }, `[${layerName(c.layer)}] ${c.text}`))) : (0, react.createElement)("div", { className: "bm-note" }, t.none);
+				const conflictNodes = conflicts.length ? (0, react.createElement)("ul", { className: "bm-list" }, conflicts.map((c, index) => {
+					const isEditing = editingFp === c.fp;
+					return (0, react.createElement)("li", { key: index, className: "bm-conflict-item" }, isEditing ? (0, react.createElement)("div", { className: "bm-entry-edit" }, (0, react.createElement)("textarea", {
+						className: "bm-entry-textarea",
+						style: editBoxStyle(),
+						value: editingText,
+						onChange: (event) => setEditingText(event.target.value)
+					}), (0, react.createElement)("div", { className: "bm-entry-ops" }, (0, react.createElement)(Button, {
+						variant: "primary",
+						size: "sm",
+						onClick: () => resolveConflict(c.fp, editingText)
+					}, t.saveEdit), (0, react.createElement)(Button, {
+						variant: "ghost",
+						size: "sm",
+						onClick: cancelEdit
+					}, t.cancel))) : (0, react.createElement)(react.Fragment, null, (0, react.createElement)("span", { className: "bm-conflict-text" }, `[${layerName(c.layer)}] ${c.text}`), (0, react.createElement)("span", { className: "bm-entry-ops" }, (0, react.createElement)(Button, {
+						variant: "ghost",
+						size: "sm",
+						onClick: () => startEdit(c)
+					}, t.edit), (0, react.createElement)(Button, {
+						variant: "ghost",
+						size: "sm",
+						onClick: () => {
+							if (window.confirm(`${t.removeConfirm}\n\n${c.text.slice(0, 80)}`)) removeConflict(c.fp, c.text);
+						}
+					}, (0, react.createElement)(IconTrashOutline16, { size: 14 }), " ", t.remove))));
+				})) : (0, react.createElement)("div", { className: "bm-note" }, t.none);
 				const forgetNodes = forget.length ? (0, react.createElement)("ul", { className: "bm-list" }, forget.map((f, index) => (0, react.createElement)("li", { key: index }, `[${layerName(f.layer)}] [w:${f.weight}] ${f.text}`))) : (0, react.createElement)("div", { className: "bm-note" }, t.none);
-				return (0, react.createElement)("div", { className: "bm-actions", style: { flexDirection: "column", alignItems: "stretch", gap: 8 } }, (0, react.createElement)("div", { className: "bm-summary" }, summary), (0, react.createElement)("div", { className: "bm-root" }, r.reportFile ? `${t.reportFile}：${r.reportFile}` : t.previewOnly), (0, react.createElement)("h4", null, t.clustersTitle), clusters.length ? clusterNodes : (0, react.createElement)("div", { className: "bm-note" }, t.noClusters), (0, react.createElement)("h4", null, t.conflictsTitle), conflictNodes, (0, react.createElement)("h4", null, t.forgetTitle), forgetNodes);
+				return (0, react.createElement)("div", { className: "bm-actions", style: { flexDirection: "column", alignItems: "stretch", gap: 8 } }, (0, react.createElement)("div", { className: "bm-summary" }, summary), (0, react.createElement)("div", { className: "bm-root" }, r.reportFile ? `${t.reportFile}：${r.reportFile}` : t.previewOnly), lastRemoved ? (0, react.createElement)("div", { className: "bm-undo-bar" }, (0, react.createElement)("span", null, `${t.removedNote}：${lastRemoved.text}…`), (0, react.createElement)(Button, {
+					variant: "primary",
+					size: "sm",
+					onClick: undoRemove
+				}, t.undo)) : null, (0, react.createElement)("h4", null, t.conflictsTitle), conflictNodes, conflicts.length ? (0, react.createElement)("div", { className: "bm-note" }, t.resolveHint) : null, (0, react.createElement)("h4", null, t.clustersTitle), clusters.length ? clusterNodes : (0, react.createElement)("div", { className: "bm-note" }, t.noClusters), (0, react.createElement)("h4", null, t.forgetTitle), forgetNodes);
 			})();
 			const reflectSection = (0, react.createElement)("section", { className: "bm-block" }, (0, react.createElement)("h4", null, (0, react.createElement)(IconThinkOutline14, { size: 14 }), " ", t.tabReflect), (0, react.createElement)("div", { className: "bm-actions" }, (0, react.createElement)(Button, {
 				variant: "primary",
