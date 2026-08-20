@@ -393,19 +393,19 @@ test('setConfig/getConfig：配置可覆盖并回读', () => {
 
 test('clusterEntries：相似记忆聚为一簇，无关记忆不聚类', () => {
   const entries = [
-    { fp: 'a1', text: '智能宠物启动成功，3199 端口监听正常' },
-    { fp: 'a2', text: '智能宠物启动失败，端口 3199 被占用' },
-    { fp: 'b1', text: '时叙 v5.0.5 最终版已发布到微信' },
-    { fp: 'b2', text: '时叙 v5.0.5 发布前需要重新构建 APK 签名' },
+    { fp: 'a1', text: '智能宠物启动成功，8080 端口监听正常' },
+    { fp: 'a2', text: '智能宠物启动失败，端口 8080 被占用' },
+    { fp: 'b1', text: '项目A v1.0.0 最终版已发布到社区' },
+    { fp: 'b2', text: '项目A v1.0.0 发布前需要重新构建安装包签名' },
     { fp: 'c1', text: '今天天气很好适合散步' },
   ]
   const clusters = I.clusterEntries(entries)
-  assert.ok(clusters.length >= 2, '应至少聚出 2 簇（宠物/时叙）')
+  assert.ok(clusters.length >= 2, '应至少聚出 2 簇（宠物/项目A）')
   const sizes = clusters.map((c) => c.members.length)
   assert.ok(sizes.every((s) => s >= 2), '每簇至少 2 条')
   const allFp = clusters.flatMap((c) => c.members.map((m) => m.fp))
   assert.ok(allFp.includes('a1') && allFp.includes('a2'), '宠物两条应被聚类')
-  assert.ok(allFp.includes('b1') && allFp.includes('b2'), '时叙两条应被聚类')
+  assert.ok(allFp.includes('b1') && allFp.includes('b2'), '项目A两条应被聚类')
   assert.ok(!allFp.includes('c1'), '无关记忆不应进任何簇')
 })
 
@@ -415,11 +415,11 @@ test('clusterEntries：相似记忆聚为一簇，无关记忆不聚类', () => 
 
 test('runReflect dry-run：返回结构化报告且不落盘', () => {
   // v0.5.2：反思数据源为 SQLite 主库（Markdown 仅为只读备份），先写入主库
-  upsertEntry({ fp: 'k1', layer: 'hot/knowledge', kind: '知识', text: '智能宠物启动成功监听 3199', weight: 10, hits: 2, created_at: '2026-08-18T10:00:00.000Z' })
-  upsertEntry({ fp: 'k2', layer: 'hot/knowledge', kind: '知识', text: '时叙 v5.0.5 已发布最终版', weight: 12, hits: 5, created_at: '2026-08-18T09:00:00.000Z' })
-  upsertEntry({ fp: 'b1', layer: 'hot/behavior', kind: '行为', text: '智能宠物 3199 端口未监听导致启动失败', weight: 8, hits: 1, created_at: '2026-08-18T11:00:00.000Z' })
+  upsertEntry({ fp: 'k1', layer: 'hot/knowledge', kind: '知识', text: '智能宠物启动成功监听 8080', weight: 10, hits: 2, created_at: '2026-08-18T10:00:00.000Z' })
+  upsertEntry({ fp: 'k2', layer: 'hot/knowledge', kind: '知识', text: '项目A v1.0.0 已发布最终版', weight: 12, hits: 5, created_at: '2026-08-18T09:00:00.000Z' })
+  upsertEntry({ fp: 'b1', layer: 'hot/behavior', kind: '行为', text: '智能宠物 8080 端口未监听导致启动失败', weight: 8, hits: 1, created_at: '2026-08-18T11:00:00.000Z' })
   writeMemFile('preferences.md', [
-    '- [2026-08-15] 宠物正式名称为深海',
+    '- [2026-08-15] 宠物正式名称为小海',
   ].join('\n') + '\n')
   const r = I.runReflect({ dryRun: true })
   assert.equal(r.dryRun, true)
