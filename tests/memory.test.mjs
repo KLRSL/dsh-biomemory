@@ -26,7 +26,7 @@ process.env.DSH_BIOMEMORY_DIR = path.join(tmpDir, 'biomemory')
 const mod = await import('../index.mjs')
 const I = mod.__internals
 // v0.5：数据层为 SQLite，先初始化 + 迁移（临时库为空 → migrated 幂等）
-import { openDb, closeDb } from '../db.mjs'
+import { openDb, closeDb, upsertEntry } from '../db.mjs'
 openDb()
 const migration = I.migrateMarkdownToDb()
 if (migration.migrated) console.log(`[test] migration: imported=${migration.imported}`)
@@ -414,15 +414,10 @@ test('clusterEntries：相似记忆聚为一簇，无关记忆不聚类', () => 
 // ============================================================================
 
 test('runReflect dry-run：返回结构化报告且不落盘', () => {
-  writeMemFile('hot/knowledge.md', [
-    '## 2026-08-18 · 会话 t1',
-    '- [知识|自动] [fp:k1] [w:10] [h:2] [t:2026-08-18 10:00] 智能宠物启动成功监听 3199',
-    '- [知识|自动] [fp:k2] [w:12] [h:5] [t:2026-08-18 09:00] 时叙 v5.0.5 已发布最终版',
-  ].join('\n') + '\n')
-  writeMemFile('hot/behavior.md', [
-    '## 2026-08-18 · 会话 t1',
-    '- [行为|自动] [fp:b1] [w:8] [h:1] [t:2026-08-18 11:00] 智能宠物 3199 端口未监听导致启动失败',
-  ].join('\n') + '\n')
+  // v0.5.2：反思数据源为 SQLite 主库（Markdown 仅为只读备份），先写入主库
+  upsertEntry({ fp: 'k1', layer: 'hot/knowledge', kind: '知识', text: '智能宠物启动成功监听 3199', weight: 10, hits: 2, created_at: '2026-08-18T10:00:00.000Z' })
+  upsertEntry({ fp: 'k2', layer: 'hot/knowledge', kind: '知识', text: '时叙 v5.0.5 已发布最终版', weight: 12, hits: 5, created_at: '2026-08-18T09:00:00.000Z' })
+  upsertEntry({ fp: 'b1', layer: 'hot/behavior', kind: '行为', text: '智能宠物 3199 端口未监听导致启动失败', weight: 8, hits: 1, created_at: '2026-08-18T11:00:00.000Z' })
   writeMemFile('preferences.md', [
     '- [2026-08-15] 宠物正式名称为深海',
   ].join('\n') + '\n')

@@ -4,17 +4,17 @@
 
 给 DeepSeek Harness (DSH) 的跨会话记忆插件：像人脑一样分层记、分级审、会代谢、透明可改。
 
-- 纯文件 Markdown 数据层（默认 `~/.dsh/memory`，`DSH_MEMORY_ROOT` 环境变量可覆盖）——肉眼可读、手改即生效
-- `memory` 工具：add / query / remove / list / pin / unpin / dream / audit
-- 会话启动自动注入**冻结记忆快照**（锁定记忆与用户偏好最高优先级，其次近期知识/行为）
+- SQLite 数据层（`~/.dsh/biomemory/biomemory.db`，node:sqlite 内置、WAL 模式、零外部依赖），旧 Markdown 记忆首次启动自动迁移（保留只读备份）
+- `memory` 工具：add / query / update / remove / list / pin / unpin / dream / audit
+- 会话启动自动注入**冻结记忆快照**（锁定记忆与用户偏好最高优先级，其次近期知识/行为；与偏好冲突的行为记忆置顶并标注 `[冲突]`）
 - **分级审批门**：重要记忆（偏好/决策/教训）走人工审批，普通事实自动写入；无审批通道时 fail closed
 - 审计：人类可读 `audit.log`（旧版，兼容保留）+ 结构化 `audit.jsonl`（JSON Lines）——每次事件可追溯
-- `/memory` 命令：list / query / add / remove / pin / unpin / dream / audit
+- `/memory` 命令：list / query / add / edit / remove / pin / unpin / dream / audit
 - `memory_recall` 工具：跨会话召回（"你还记得…吗"场景）
 - 去重：内容指纹跳过重复记忆
 - **记忆代谢**（`/memory dream`）：半衰期衰减 + 引用巩固 + 冲突仲裁 + 低权重归档——执行前自动备份、损坏自动回滚
 - **记忆钉**：锁定记忆不参与衰减、无条件注入快照
-- **语义检索**：纯 JS TF-IDF + cosine——无原生模块、无外部依赖
+- **语义检索**：本地嵌入模型（bge-small-zh-v1.5，512 维，离线）+ exact/semantic/hybrid 三模式（v0.5）
 
 ## 安装
 
@@ -56,7 +56,7 @@ pnpm add link:./dsh-biomemory
 
 1. **半衰期衰减**（默认 7 天）：权重每过半衰期衰减一半（`w × 0.5^(年龄/半衰期)`），下限 1。
 2. **引用巩固**：单条引用 ≥ `consolidateThreshold`（默认 3）次则 +1 权重，上限 `weightCap`（默认 20）。
-3. **冲突仲裁**：行为记忆与 preferences 冲突时偏好优先——该行为记忆权重减半，并记录 `CONFLICT` 审计事件。
+3. **冲突浮出（v0.5.2）**：行为记忆与 preferences 冲突时不再静默减半——该条目豁免衰减/归档、保持活跃，并在列表与会话快照中置顶浮出，**由你人工裁决**（改掉冲突内容后恢复正常代谢）；记录 `CONFLICT` 审计事件。
 4. **归档**：权重低于 `decayThreshold`（默认 3）的记忆移入 `archive/`——移动，不删除。
 
 用法：
@@ -95,9 +95,14 @@ dry-run 示例输出：
 
 报告写入 `longterm/reflections/<时间戳>.md`，支持 `--dry-run` 预览。
 
-## 知识页（v0.4.0）
+## 知识页（v0.4.0 / v0.5.2 增强）
 
-设置页新增「知识库」tab：全文/语义搜索、按分层筛选，展示每条记忆的权重/引用/时间/锁定状态，支持一键锁定/解锁与**安全删除**（删除前自动备份，可回滚）。配套 Web API：`GET /biomemory/api/entries`、`POST /biomemory/api/entries/pin|unpin|remove`、`POST /biomemory/api/reflect`。
+设置页新增「知识库」tab：全文/语义搜索、按分层筛选，展示每条记忆的权重/引用/时间/锁定状态，支持一键锁定/解锁、**就地编辑**（行内编辑框，保留锁定/权重，审计 UPDATE，防重复）与**安全删除**（删除前自动备份，可回滚）。与偏好冲突的行为记忆自动**置顶**并红色徽标提示。配套 Web API：`GET /biomemory/api/entries`、`POST /biomemory/api/entries/pin|unpin|update|remove`、`POST /biomemory/api/reflect`。
+
+## 编辑与冲突浮出（v0.5.2）
+
+- 对话内编辑：`memory action=update fp="指纹" text="新内容"`，或 `/memory edit <fp> <新内容>`
+- 冲突浮出：行为记忆与偏好冲突时不再只是自动降权——`memory action=list`、知识页、会话冻结快照都会把冲突条目**置顶**并标注，由你裁决修改（改掉冲突内容后冲突标记自动消失）
 
 ## 记忆钉
 

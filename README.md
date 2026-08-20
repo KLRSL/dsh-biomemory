@@ -4,6 +4,14 @@
 
 A cross-session memory plugin for DeepSeek Harness (DSH), designed like a human brain: layered memory, graded approval, memory metabolism, fully transparent.
 
+**v0.5.2 (2026-08-20) — editable memories + conflict surfacing:**
+
+- **Edit entries in place**: `memory action=update fp="..." text="..."` (tool), `/memory edit <fp> <new text>` (command) and an **Edit** button on the Knowledge tab — metadata (pin/weight/layer) is preserved, the stale vector is cleared, and an `UPDATE` audit event is recorded; duplicates are rejected.
+- **Conflict surfacing**: behavior memories that clash with user preferences are **pinned to the top** of `memory action=list`, the Knowledge tab (red badge + left border) and the frozen session snapshot (marked `[冲突]`) — so conflicts float up for you to judge and fix, instead of being silently auto-arbitrated away. Search results keep relevance order but still carry the conflict marker.
+- **Conflict arbitration in the Reflect tab**: conflicts are listed at the top of the reflect view, each with inline **Edit** (large auto-growing editor) and **Delete** buttons, plus an **Undo** bar after deletion.
+- **Single-entry rollback**: `memory action=restore fp="..."` (tool), `/memory undo <fp>` (command), `POST /entries/restore` (API) restore a deleted entry from the newest backup DB — metadata preserved, `RESTORE` audit event recorded.
+- **Reflect data source fixed to SQLite** (was scanning the Markdown read-only backups — deleted entries resurrected on the next reflect).
+
 **v0.5.1 (2026-08-20) — pet bridge extracted:**
 
 - The DSH↔desktop-pet bridge (session/event state forwarding + approval panel) moved out to its own plugin `dsh-whale-pet-bridge` — biomemory now only handles memory (save notifications to the pet are kept).
@@ -21,10 +29,10 @@ A cross-session memory plugin for DeepSeek Harness (DSH), designed like a human 
 
 Core features (unchanged from v0.4):
 
-- `memory` tool: add / query / remove / list / pin / unpin / dream / audit
+- `memory` tool: add / query / update / remove / list / pin / unpin / dream / audit
 - **Frozen snapshot injection** at session start (pinned memories and user preferences at top priority, then recent knowledge/behavior)
 - **Graded approval gate**: important memories (preferences/decisions/lessons) require human approval; ordinary facts are auto-saved; fails closed when no approval channel is available
-- `/memory` command: list / query / add / remove / pin / unpin / dream / audit
+- `/memory` command: list / query / add / edit / remove / pin / unpin / dream / audit
 - `memory_recall` tool: cross-session recall ("do you remember…" scenarios)
 - Deduplication: content fingerprint skips duplicate entries
 - **Memory metabolism** (`/memory dream`): half-life decay, reference consolidation, conflict arbitration, cold archiving (status flag, never deleted)
@@ -70,7 +78,7 @@ Each entry is a single line: `- [knowledge|auto] [fp:xxx] [w:10] [h:3] [t:2026-0
 
 1. **Half-life decay** (default 7 days): weight halves every half-life (`w × 0.5^(age/halfLife)`), floored at 1.
 2. **Reference consolidation**: entries referenced ≥ `consolidateThreshold` (default 3) times gain +1 weight, capped at `weightCap` (default 20).
-3. **Conflict arbitration**: when behavior memory conflicts with preferences, preferences win — the behavior entry's weight is halved and a `CONFLICT` audit event is recorded.
+3. **Conflict surfacing (v0.5.2)**: when behavior memory conflicts with preferences it is no longer silently halved — it is exempted from decay/archival, stays active, and floats to the top of listings and the session snapshot so **you** can judge and edit it. A `CONFLICT` audit event is recorded; once you edit it into agreement, normal metabolism resumes.
 4. **Archiving**: entries whose weight drops below `decayThreshold` (default 3) move to `archive/` — moved, never deleted.
 
 Usage:
@@ -111,7 +119,7 @@ Reports are written to `longterm/reflections/<timestamp>.md`; `--dry-run` previe
 
 ## Knowledge page (v0.4.0)
 
-The settings page gains a **Knowledge** tab: full-text/semantic search, layer filter, per-entry weight/hits/time/pin display, one-click pin/unpin and **safe removal** (backed up first, restorable). Web API: `GET /biomemory/api/entries`, `POST /biomemory/api/entries/pin|unpin|remove`, `POST /biomemory/api/reflect`.
+The settings page gains a **Knowledge** tab: full-text/semantic search, layer filter, per-entry weight/hits/time/pin display, one-click pin/unpin, **edit** (inline textarea) and **safe removal** (backed up first, restorable). Conflicting behavior entries float to the top with a red badge. Web API: `GET /biomemory/api/entries`, `POST /biomemory/api/entries/pin|unpin|update|remove`, `POST /biomemory/api/reflect`.
 
 ## Memory Pins
 

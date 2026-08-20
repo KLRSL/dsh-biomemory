@@ -560,12 +560,13 @@ function runDream(opts = {}) {
       e.weight = Math.min(CFG.weightCap, e.weight + 1)
       changed = true
     }
-    // 3. 冲突仲裁：行为与偏好冲突 → 偏好优先，行为降权
+    // 3. 冲突仲裁（v0.5.2 改为「浮出待裁决」）：与偏好冲突的行为记忆不再自动降权
+    //    （旧行为=偏好优先、行为减半，会把冲突静默压掉并归档）——改为豁免代谢，
+    //    保持活跃并置顶浮出，供用户人工裁决；用户改掉冲突内容后恢复正常代谢
     if (e.kind === '行为' && detectConflict(e, prefsText)) {
       report.conflicted++
-      report.items.push({ op: 'CONFLICT', layer: e.layer, fp: e.fp, entry_id: e.entry_id, to: Math.max(1, e.weight * 0.5) })
-      e.weight = Math.max(1, Math.round(e.weight * 0.5 * 10) / 10)
-      changed = true
+      report.items.push({ op: 'CONFLICT', layer: e.layer, fp: e.fp, entry_id: e.entry_id, note: '浮出待用户裁决（不降权不归档）' })
+      continue
     }
     // 4. 归档：权重低于阈值 → status=archived（保留记录，文档 §2.4.3 冷归档）
     let archivedNow = false
@@ -647,14 +648,17 @@ function latestReflection() {
 // 返回 { scanned, recent7, prev7, clusters, conflicts, forget, reportFile, text, dryRun }
 function runReflect(opts = {}) {
   const dryRun = opts.dryRun === true
-  const all = scanAllFiles()
-  const entries = []
-  for (const f of all) for (const e of f.entries) entries.push({ layer: f.layer, ...e })
+  // v0.5.2：统一数据源为 SQLite 主库（旧实现扫 Markdown 备份文件，导致已删除
+  // 条目在反思中复活——删除/编辑以 SQLite 为准，Markdown 仅为只读备份）
+  db.openDb()
+  const entries = db.allEntries({ includeArchived: true }).map((e) => ({ layer: e.layer, ...e }))
   const DAY = 86400000
   const now = Date.now()
   const ageOf = (e) => {
-    if (!e.ts) return null
-    const t = new Date(e.ts.replace(' ', 'T'))
+    const ts = e.ts || e.created_at
+    if (!ts) return null
+    let t = new Date(ts)
+    if (Number.isNaN(t.getTime()) && String(ts).includes(' ')) t = new Date(String(ts).replace(' ', 'T'))
     return Number.isNaN(t.getTime()) ? null : t.getTime()
   }
   const recent7 = entries.filter((e) => { const a = ageOf(e); return a !== null && now - a < 7 * DAY })
@@ -684,8 +688,8 @@ function runReflect(opts = {}) {
     ...(clusters.length
       ? clusters.map((c, i) => `### 主题 ${i + 1}（${c.members.length} 条）\n${c.members.slice(0, 6).map((m) => `- [${m.layer}] [w:${m.weight}] ${m.text}`).join('\n')}`)
       : ['（暂无相似记忆聚类）']),
-    '## 潜在冲突',
-    ...(conflicts.length ? conflicts.map((c) => `- [${c.layer}] [fp:${c.fp}] ${c.text}`) : ['（无）']),
+    '## 潜在冲突（浮出待用户裁决，不自动降权；改掉冲突内容后恢复正常代谢）',
+    ...(conflicts.length ? conflicts.map((c) => `- [${c.layer}] [fp:${c.fp}] ${c.text}`).concat(['', '裁决：memory action=update fp="<指纹>" text="新内容"，或 /memory edit <fp> <新内容>']) : ['（无）']),
     '## 遗忘候选（可人工删除或归档）',
     ...(forget.length ? forget.map((f) => `- [${f.layer}] [w:${f.weight}] ${f.text}`) : ['（无）']),
   ]
@@ -796,6 +800,23 @@ function removeEntry(fp) {
   return { ok: true, fp, layer: e.layer, text: e.text, backup: bk }
 }
 
+// 单条目回滚：从最近备份库读回被删除的条目（保留元数据，向量置空重算），审计 RESTORE
+function restoreEntry(fp) {
+  db.openDb()
+  const existing = db.getByFp(fp)
+  if (existing) return { ok: false, error: `[fp:${fp}] 仍存在，无需恢复` }
+  const backups = db.listBackups() // 最新在前
+  for (const name of backups) {
+    const e = db.readEntryFromBackup(fp, name)
+    if (!e) continue
+    const { entry_id, vector, ...rest } = e
+    db.upsertEntry({ ...rest, status: e.status || 'active', vector: null })
+    db.audit('RESTORE', { entry_id, detail: { fp, text: e.text, from: name } })
+    return { ok: true, fp, layer: e.layer, text: e.text, backup: name }
+  }
+  return { ok: false, error: `备份库中未找到 [fp:${fp}]（备份保留最近 ${db.MAX_BACKUPS || 7} 次）` }
+}
+
 // 条目状态（知识页状态色）：conflict=与偏好冲突（红）/ warning=低权重待处理（黄）/ ok=正常（绿）
 function entryStatus(e, prefsText) {
   if (e.kind === '行为' && detectConflict(e, prefsText)) return 'conflict'
@@ -833,6 +854,7 @@ async function queryEntries(query, limit = CFG.maxQueryResults, opts = {}) {
   const minWeight = opts.minWeight ?? 0.1
   const fragmentTypes = Array.isArray(opts.fragmentTypes) && opts.fragmentTypes.length ? new Set(opts.fragmentTypes) : null
   const includeArchived = opts.includeArchived === true
+  const prefsText = readFile(PATHS.preferences)
 
   const ql = (query || '').toLowerCase()
   let entries = db.allEntries({ includeArchived })
@@ -862,7 +884,7 @@ async function queryEntries(query, limit = CFG.maxQueryResults, opts = {}) {
     const e = r.entry
     if (!e) continue
     const isSem = mode !== 'exact' && !kwHits.has(e.fp)
-    out.push({ layer: e.layer, fp: e.fp, text: e.text, weight: e.weight, semantic: isSem, score: r.score, fragment_type: e.fragment_type })
+    out.push({ layer: e.layer, fp: e.fp, text: e.text, weight: e.weight, semantic: isSem, score: r.score, fragment_type: e.fragment_type, status: entryStatus(e, prefsText) })
     if (ql) hitFps.add(e.fp)
   }
   // 精确关键词命中未进 top-N 的也补入（保底不丢）
@@ -870,7 +892,7 @@ async function queryEntries(query, limit = CFG.maxQueryResults, opts = {}) {
     const inOut = new Set(out.map((o) => o.fp))
     for (const e of entries) {
       if (kwHits.has(e.fp) && !inOut.has(e.fp) && out.length < limit) {
-        out.push({ layer: e.layer, fp: e.fp, text: e.text, weight: e.weight, semantic: false })
+        out.push({ layer: e.layer, fp: e.fp, text: e.text, weight: e.weight, semantic: false, status: entryStatus(e, prefsText) })
         inOut.add(e.fp)
       }
     }
@@ -879,6 +901,10 @@ async function queryEntries(query, limit = CFG.maxQueryResults, opts = {}) {
   if (ql && hitFps.size) {
     const files = consolidateHits(hitFps)
     if (files) db.audit('RECALL', { detail: { count: hitFps.size, files } })
+  }
+  // 浏览场景（无关键词，无相关性可言）：与偏好冲突的行为记忆置顶（冲突浮出，供用户裁决）
+  if (!ql) {
+    out.sort((a, b) => (b.status === 'conflict') - (a.status === 'conflict'))
   }
   return out.slice(0, limit)
 }
@@ -902,11 +928,20 @@ function renderSnapshot() {
   // 自动召回排序：权重高、新近的优先（预算内只注入最有价值的）
   const rank = (a, b) => (b.weight - a.weight) || (String(b.created_at || '').localeCompare(String(a.created_at || '')))
   const fmt = (e) => `- [${e.layer}] ${e.text}`
+  const prefsText = readFile(PATHS.preferences)
   const parts = []
   if (prefs) parts.push('## 用户偏好（最高优先级）\n' + prefs)
   if (pinned.length) parts.push('## 锁定记忆（最高优先级，不参与衰减）\n' + pinned.join('\n'))
   if (kb.length) parts.push('## 近期知识记忆\n' + kb.sort(rank).map(fmt).join('\n'))
-  if (bb.length) parts.push('## 近期行为记忆\n' + bb.sort(rank).map(fmt).join('\n'))
+  if (bb.length) {
+    // 与偏好冲突的行为记忆置顶并标注（冲突浮出，会话内即可发现）
+    const bbSorted = [...bb].sort((a, b) => {
+      const ca = a.kind === '行为' && detectConflict(a, prefsText) ? 1 : 0
+      const cb = b.kind === '行为' && detectConflict(b, prefsText) ? 1 : 0
+      return (cb - ca) || rank(a, b)
+    })
+    parts.push('## 近期行为记忆\n' + bbSorted.map((e) => `- [${e.layer}]${e.kind === '行为' && detectConflict(e, prefsText) ? ' [冲突]' : ''} ${e.text}`).join('\n'))
+  }
   if (!parts.length) return ''
   let text = `# 记忆快照（dsh-biomemory，会话冻结）\n\n${parts.join('\n\n')}`
   // 热区 token 硬限制：超出部分截断（保留偏好与锁定）
@@ -1004,8 +1039,10 @@ function makeMemoryTool(ctx) {
       '用法: memory action=add text="..." [track=user|agent] —— 保存（重要项自动请求审批，审批不可用时按配置自动保存）',
       '      memory action=query text="关键词" [mode=hybrid|exact|semantic] [projectId=项目] [topK=10] [minWeight=0.1] [fragmentTypes=decision,preference] [includeArchived=false] —— 查询',
       '           （hybrid=精确+语义混合（默认）；exact=关键词精确；semantic=向量语义；命中自动巩固）',
+      '      memory action=update fp="指纹" text="新内容" —— 编辑一条（保留锁定/权重，自动审计可追溯）',
       '      memory action=remove fp="指纹" —— 删除一条（自动备份，可回滚）',
-      '      memory action=list —— 列出全部条目',
+      '      memory action=restore fp="指纹" —— 从最近备份回滚被删除的一条',
+      '      memory action=list —— 列出全部条目（与偏好冲突的行为记忆置顶并标注）',
       '      memory action=pin fp="指纹" —— 锁定（不参与衰减）',
       '      memory action=unpin fp="指纹" —— 解锁',
       '      memory action=dream [dryRun=true] [resume=true] —— 记忆代谢（衰减/巩固/归档，支持断点续跑）',
@@ -1016,10 +1053,10 @@ function makeMemoryTool(ctx) {
     parameters: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['add', 'query', 'remove', 'list', 'pin', 'unpin', 'dream', 'reflect', 'audit'], description: '操作' },
-        text: { type: 'string', description: 'add 的内容 或 query 的关键词' },
+        action: { type: 'string', enum: ['add', 'query', 'update', 'remove', 'restore', 'list', 'pin', 'unpin', 'dream', 'reflect', 'audit'], description: '操作' },
+        text: { type: 'string', description: 'add 的内容、query 的关键词、update 的新内容' },
         track: { type: 'string', enum: ['user', 'agent'], description: 'user=用户偏好/知识；agent=行为/教训（默认 agent）' },
-        fp: { type: 'string', description: 'remove/pin/unpin 时按指纹' },
+        fp: { type: 'string', description: 'update/remove/restore/pin/unpin 时按指纹' },
         dryRun: { type: 'boolean', description: 'dream/reflect 时预览不执行' },
         type: { type: 'string', description: 'audit 过滤事件类型' },
         sinceDays: { type: 'number', description: 'audit 只看最近 N 天' },
@@ -1058,7 +1095,7 @@ function makeMemoryTool(ctx) {
         if (!value.ok) return [{ type: 'text', text: value.error || 'memory 操作失败' }]
         if (Array.isArray(value.entries)) {
           if (!value.entries.length) return [{ type: 'text', text: '（无匹配记忆）' }]
-          return [{ type: 'text', text: value.entries.map((e) => `- [${e.layer}]${e.semantic ? '（语义）' : ''} ${e.text}`).join('\n') }]
+          return [{ type: 'text', text: value.entries.map((e) => `- [${e.layer}]${e.semantic ? '（语义）' : ''}${e.status === 'conflict' ? ' [冲突]' : ''} ${e.text}`).join('\n') }]
         }
         if (value.report) {
           const r = value.report
@@ -1066,8 +1103,13 @@ function makeMemoryTool(ctx) {
             // 深度反思报告
             const head = `【深度反思${r.dryRun ? '预览' : ''}】条目 ${r.scanned}：主题聚类 ${r.clusters.length} · 潜在冲突 ${r.conflicts.length} · 遗忘候选 ${r.forget.length}\n近 7 天写入 ${r.recent7} 条（上一周 ${r.prev7} 条）`
             const detail = r.clusters.slice(0, 5).map((c) => `- 主题（${c.size} 条）：${c.members.slice(0, 2).map((m) => m.text).join(' / ')}`).join('\n')
+            // 冲突浮出：列出冲突条目与裁决入口（对话内可直接编辑）
+            const conflictLines = (r.conflicts || []).slice(0, 3).map((c) => `- ⚠ [${c.layer}] [fp:${c.fp}] ${c.text}`).join('\n')
+            const resolveNote = (r.conflicts || []).length
+              ? `\n\n冲突 ${r.conflicts.length} 条（浮出待裁决，不自动降权）：\n${conflictLines}\n裁决：memory action=update fp="<指纹>" text="新内容"，或 /memory edit <fp> <新内容>`
+              : ''
             const fileNote = r.reportFile ? `\n报告：${r.reportFile}` : '（预览不落盘）'
-            return [{ type: 'text', text: detail ? `${head}\n${detail}${fileNote}` : `${head}${fileNote}` }]
+            return [{ type: 'text', text: detail ? `${head}${resolveNote}\n${detail}${fileNote}` : `${head}${resolveNote}${fileNote}` }]
           }
           const head = `${r.dryRun ? '【预览】' : ''}扫描 ${r.scanned} 条：衰减 ${r.decayed} · 巩固 ${r.consolidated} · 冲突 ${r.conflicted} · 归档 ${r.archived}\n备份：${r.backup}`
           const detail = r.items.slice(0, 15).map((it) => `- ${it.op} [${it.layer}] [fp:${it.fp}] ${it.to !== undefined ? `→ ${it.to}` : ''}`).join('\n')
@@ -1098,10 +1140,20 @@ function makeMemoryTool(ctx) {
         return { ok: true, entries: await queryEntries(text, topK || CFG.maxQueryResults, { mode, projectId, topK: topK || CFG.maxQueryResults, minWeight, fragmentTypes: fts, includeArchived }) }
       }
       if (action === 'list') return { ok: true, entries: await queryEntries('', topK || 200, { mode: 'exact' }) }
+      if (action === 'update') {
+        if (!fp || !String(text ?? '').trim()) return { ok: false, error: 'fp 与 text 必填（先 list/query 找到指纹）' }
+        const r = updateEntryText(fp, String(text).trim())
+        return r.ok ? { ok: true, note: r.note || `已更新 [fp:${fp}]`, fp } : r
+      }
       if (action === 'remove') {
         if (!fp) return { ok: false, error: 'fp 必填（先 query 找到指纹）' }
         const r = removeEntry(fp)
-        return r.ok ? { ok: true, note: `已删除 [fp:${fp}]（备份：${r.backup}）` } : r
+        return r.ok ? { ok: true, note: `已删除 [fp:${fp}]（备份：${r.backup}，可回滚）` } : r
+      }
+      if (action === 'restore') {
+        if (!fp) return { ok: false, error: 'fp 必填' }
+        const r = restoreEntry(fp)
+        return r.ok ? { ok: true, note: `已回滚 [fp:${fp}]（来源备份：${r.backup}）` } : r
       }
       if (action === 'pin' || action === 'unpin') {
         if (!fp) return { ok: false, error: 'fp 必填（先 query 找到指纹）' }
@@ -1172,7 +1224,7 @@ function registerMemoryCommand(ctx) {
   ctx.inject(['commands'], (commandCtx) => {
     commandCtx.commands.register({
       name: 'memory',
-      description: '记忆管理：list / query <词> / add <内容> / remove <fp> / pin <fp> / unpin <fp> / dream [--dry-run] / reflect [--dry-run] / entries [词] / audit [--since 7d] [--type DECAY]',
+      description: '记忆管理：list / query <词> / add <内容> / edit <fp> <新内容> / remove <fp> / undo <fp> / pin <fp> / unpin <fp> / dream [--dry-run] / reflect [--dry-run] / entries [词] / audit [--since 7d] [--type DECAY]',
       handler(invocation) {
         const { rawInput, agent } = invocation
         const tokens = (rawInput || '').trim().split(/\s+/)
@@ -1194,11 +1246,24 @@ function registerMemoryCommand(ctx) {
           const r = writeEntry({ track: 'agent', text: q, sessionId, approved: true })
           return { kind: 'success', text: r.skipped ? '重复，已跳过' : `已保存 [fp:${r.fp}]（人类发起）` }
         }
+        if (verb === 'edit') {
+          const fp = rest[0]
+          const content = rest.slice(1).join(' ')
+          if (!fp || !content) return { kind: 'success', text: '用法: /memory edit <fp> <新内容>' }
+          const r = updateEntryText(fp, content)
+          return { kind: 'success', text: r.ok ? (r.note || `已更新 [fp:${fp}]`) : r.error }
+        }
         if (verb === 'remove') {
           const fp = rest[0]
           if (!fp) return { kind: 'success', text: '用法: /memory remove <fp>' }
           const r = removeEntry(fp)
-          return { kind: 'success', text: r.ok ? `已删除 [fp:${fp}]（备份：${r.backup}）` : r.error }
+          return { kind: 'success', text: r.ok ? `已删除 [fp:${fp}]（备份：${r.backup}，/memory undo ${fp} 可回滚）` : r.error }
+        }
+        if (verb === 'undo') {
+          const fp = rest[0]
+          if (!fp) return { kind: 'success', text: '用法: /memory undo <fp>' }
+          const r = restoreEntry(fp)
+          return { kind: 'success', text: r.ok ? `已回滚 [fp:${fp}]（来源备份：${r.backup}）` : r.error }
         }
         if (verb === 'entries') {
           const q = rest.join(' ')
@@ -1218,7 +1283,11 @@ function registerMemoryCommand(ctx) {
           const r = runReflect({ dryRun })
           const head = `${dryRun ? '【预览】' : ''}条目 ${r.scanned}：主题聚类 ${r.clusters.length} · 冲突 ${r.conflicts.length} · 遗忘候选 ${r.forget.length} · 近7天写入 ${r.recent7}（上周 ${r.prev7}）`
           const detail = r.clusters.slice(0, 5).map((c) => `- 主题（${c.size} 条）：${c.members.slice(0, 2).map((m) => m.text).join(' / ')}`).join('\n')
-          return { kind: 'success', text: detail ? `${head}\n${detail}` : head }
+          const conflictLines = (r.conflicts || []).slice(0, 3).map((c) => `- ⚠ [${c.layer}] [fp:${c.fp}] ${c.text}`).join('\n')
+          const resolveNote = (r.conflicts || []).length
+            ? `\n冲突 ${r.conflicts.length} 条（浮出待裁决，不自动降权）：\n${conflictLines}\n裁决：/memory edit <fp> <新内容>`
+            : ''
+          return { kind: 'success', text: detail ? `${head}${resolveNote}\n${detail}` : `${head}${resolveNote}` }
         }
         if (verb === 'pin' || verb === 'unpin') {
           const fp = rest[0]
@@ -1247,7 +1316,7 @@ function registerMemoryCommand(ctx) {
           const recs = queryAudit({ sinceDays, type })
           return { kind: 'success', text: recs.length ? recs.slice(-20).map((r) => `${r.t.slice(0, 16)} ${r.event} ${r.fp || ''} ${r.approved ? '[' + r.approved + ']' : ''} ${r.text || ''}`).join('\n') : '（无匹配审计记录）' }
         }
-        return { kind: 'success', text: '用法: /memory list | query <词> | add <内容> | remove <fp> | pin <fp> | unpin <fp> | entries [词] | dream [--dry-run] | reflect [--dry-run] | audit [--since 7d] [--type DECAY]' }
+        return { kind: 'success', text: '用法: /memory list | query <词> | add <内容> | edit <fp> <新内容> | remove <fp> | undo <fp> | pin <fp> | unpin <fp> | entries [词] | dream [--dry-run] | reflect [--dry-run] | audit [--since 7d] [--type DECAY]' }
       },
     })
   })
@@ -1433,8 +1502,10 @@ export function apply(ctx, config = {}) {
             return send(200, { ok: true, entries: merged.slice(0, limit), mode })
           }
           const all = db.listEntries({ layer: layer || undefined, limit: 1000 })
-          all.sort((a, b) => (b.pinned - a.pinned) || (b.weight - a.weight) || String(b.created_at || '').localeCompare(String(a.created_at || '')))
-          return send(200, { ok: true, entries: all.slice(0, limit).map((e) => ({ layer: e.layer, fp: e.fp, kind: e.kind, mode: e.mode, weight: e.weight, hits: e.hits, ts: e.created_at, pinned: e.pinned, text: e.text, fragment_type: e.fragment_type, status: entryStatus(e, prefsText) })) })
+            .map((e) => ({ layer: e.layer, fp: e.fp, kind: e.kind, mode: e.mode, weight: e.weight, hits: e.hits, ts: e.created_at, pinned: e.pinned, text: e.text, fragment_type: e.fragment_type, status: entryStatus(e, prefsText) }))
+          // 冲突置顶：与偏好冲突的行为记忆排最前，再按锁定/权重/新近
+          all.sort((a, b) => (b.status === 'conflict') - (a.status === 'conflict') || (b.pinned - a.pinned) || (b.weight - a.weight) || String(b.ts || '').localeCompare(String(a.ts || '')))
+          return send(200, { ok: true, entries: all.slice(0, limit) })
         }
         if (req.method === 'GET' && p === '/vectors') {
           // 手动触发向量索引补算（POST /vectors 亦可）
@@ -1471,6 +1542,13 @@ export function apply(ctx, config = {}) {
           if (!body.fp) return send(400, { ok: false, error: 'fp 必填' })
           const r = removeEntry(body.fp)
           return r.ok ? send(200, { ok: true, fp: r.fp, backup: r.backup }) : send(404, r)
+        }
+        if (req.method === 'POST' && p === '/entries/restore') {
+          let body = {}
+          try { body = JSON.parse(await readBody(req)) } catch { /* ignore */ }
+          if (!body.fp) return send(400, { ok: false, error: 'fp 必填' })
+          const r = restoreEntry(body.fp)
+          return r.ok ? send(200, { ok: true, fp: r.fp, text: r.text, backup: r.backup }) : send(404, r)
         }
         if (req.method === 'POST' && p === '/entries/update') {
           let body = {}
@@ -1511,6 +1589,7 @@ export const __internals = {
   latestReflection,
   consolidateHits,
   removeEntry,
+  restoreEntry,
   updateEntryText,
   entryStatus,
   semanticSearch,

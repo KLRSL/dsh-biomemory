@@ -1,7 +1,7 @@
 {
   "name": "dsh-biomemory",
-  "description": "生物仿生记忆系统（Biomimetic Memory for DeepSeek Harness）v0.5.1：SQLite 数据层（node:sqlite 内置，零外部依赖）+ 本地嵌入模型语义检索（bge-small-zh-v1.5，离线）+ exact/semantic/hybrid 三模式 + RRF 融合 + Markdown 自动迁移 + 冻结快照注入 + 审批门 + 记忆代谢（断点续跑）+ 记忆钉 + 结构化审计（聚合统计）+ 深度反思 + 知识页 + /memory 命令",
-  "version": "0.5.1",
+  "description": "生物仿生记忆系统（Biomimetic Memory for DeepSeek Harness）v0.5.2：SQLite 数据层（node:sqlite 内置，零外部依赖）+ 本地嵌入模型语义检索（bge-small-zh-v1.5，离线）+ exact/semantic/hybrid 三模式 + RRF 融合 + Markdown 自动迁移 + 冻结快照注入 + 审批门 + 记忆代谢（断点续跑）+ 记忆钉 + 结构化审计（聚合统计）+ 深度反思 + 知识页 + 可编辑条目 + 冲突浮出置顶 + /memory 命令",
+  "version": "0.5.2",
   "type": "module",
   "main": "./index.mjs",
   "exports": {

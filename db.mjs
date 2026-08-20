@@ -435,6 +435,20 @@ export function restoreLatestBackup() {
   return src
 }
 
+/** 从指定备份库读取单条条目（按 fp；不碰主库连接） */
+export function readEntryFromBackup(fp, backupPath) {
+  const src = path.isAbsolute(backupPath) ? backupPath : path.join(backupDir(), backupPath)
+  if (!fs.existsSync(src)) return undefined
+  let conn
+  try {
+    conn = new DatabaseSync(src)
+    const r = conn.prepare('SELECT * FROM entries WHERE fp = ?').get(fp)
+    return r ? fromRow(r) : undefined
+  } catch { return undefined } finally {
+    if (conn) { try { conn.close() } catch { /* ignore */ } }
+  }
+}
+
 // ---------- 工具 ----------
 
 export function isoNow() { return new Date().toISOString() }
