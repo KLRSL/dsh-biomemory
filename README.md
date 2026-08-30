@@ -4,6 +4,16 @@
 
 A cross-session memory plugin for DeepSeek Harness (DSH), designed like a human brain: layered memory, graded approval, memory metabolism, fully transparent.
 
+**v0.6 (2026-08-31) — architecture refactor + session-end auto-consolidation:**
+
+- **Modular architecture**: `index.mjs` slimmed to a wiring layer; business logic split into focused modules — `shared` (config/utils/audit/conflict), `store` (write/pin/remove/restore/migration), `retrieve` (query/semantic), `meta` (metabolism/reflect), `snapshot` (frozen snapshot/session consolidator), `gate` (approval/self-heal), `notify` (pet bubble), `session-state`. No behavior change; 57 tests green.
+- **Session-end auto-consolidation**: after a turn ends (`turn/end` completed), the plugin injects a "consolidate this turn" directive into the next prompt assembly; the model then writes anything worth remembering via `memory add`. Cleared on write, 5-minute stale guard, deduplication respected.
+- **Fix**: `package.json` `files` whitelist now includes all new modules (publishing without them would break consumers with `ERR_MODULE_NOT_FOUND`); `/reflect` `/dream` endpoints read `dryRun` from the request body.
+
+**v0.5.3 (2026-08-31) — UI modernization:**
+
+- Settings page restyled with the "monumental visual" design language (warm paper-toned surfaces, accent gold line, rounded cards, focus rings) — no more default-blue look; peer deps bumped to `>=0.1.1-rc.1`.
+
 **v0.5.2 (2026-08-20) — editable memories + conflict surfacing:**
 
 - **Edit entries in place**: `memory action=update fp="..." text="..."` (tool), `/memory edit <fp> <new text>` (command) and an **Edit** button on the Knowledge tab — metadata (pin/weight/layer) is preserved, the stale vector is cleared, and an `UPDATE` audit event is recorded; duplicates are rejected.
