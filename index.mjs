@@ -62,6 +62,17 @@ const MEMORY_ROOT = process.env.DSH_MEMORY_ROOT || path.join(os.homedir(), '.dsh
 const TOOL_NAME = 'memory'
 const REQUEST_MARKER = '[dsh-biomemory]'
 
+// ---------- 会话结束自动沉淀（v0.6）：turn/end(completed) 后注入总结指令 ----------
+// 监听 DSH 会话事件，在一轮对话成功结束(turn/end reason=completed/success)时，
+// 标记该会话"待沉淀"；systemPrompt.section 的 text 函数检测到标记后，在下一轮
+// 组装提示词时注入一段"请沉淀本轮值得记住内容"的指令，模型据此调用 memory add。
+// 完成后清除标记，避免重复/持续污染。
+const SESSION_SUMMARY_ROOT = 'session-summary'   // SQLite 里存最近一次 turn/end 时间
+let _lastTurnEnd = 0        // 最近一次 turn/end 时间戳(ms)
+let _lastTurnEndSession = '' // 最近一次 turn/end 的 sessionId
+let _summaryPending = false // 是否存在"待沉淀"标记
+let _summarySid = ''         // 待沉淀的 sessionId
+
 // ---------- 配置（默认值，可在 apply(config) 覆盖） ----------
 
 const DEFAULTS = {
@@ -427,6 +438,8 @@ function writeEntry({ track, text, sessionId, approved, mode }) {
   if (track === 'user') {
     appendFile(PATHS.preferences, `- [${nowStamp()}] ${text.trim()}\n`)
   }
+  // v0.6 会话沉淀：模型调 memory add 写入成功 → 视为"已沉淀"，清除待沉淀标记
+  clearSummaryPending()
   petNotify('记忆已保存', `${track === 'user' ? '偏好' : '经验'}：${text}`)
   return { ok: true, fp }
 }
@@ -958,6 +971,55 @@ function renderSnapshot() {
   return text
 }
 
+// ---------- 会话结束自动沉淀（v0.6） ----------
+
+// 设置"待沉淀"标记（turn/end completed 时调用）
+function markSummaryPending(sid) {
+  _summaryPending = true
+  _summarySid = sid || ''
+}
+
+// 清除标记（沉淀完成/超时后）
+function clearSummaryPending() {
+  _summaryPending = false
+  _summarySid = ''
+}
+
+// 供 systemPrompt.section 调用的总结指令文本（无待沉淀标记时返回空串，不污染提示词）
+function sessionSummarySectionText() {
+  // 无待沉淀标记 → 不注入
+  if (!_summaryPending) return ''
+  // 距上次 turn/end 超过 5 分钟（用户在另一处、或已沉淀）→ 不再催促
+  if (_lastTurnEnd > 0 && Date.now() - _lastTurnEnd > 5 * 60 * 1000) {
+    clearSummaryPending()
+    return ''
+  }
+  // 注入一次总结指令：引导模型判断本轮有无值得沉淀的偏好/决策/教训并写入
+  return [
+    '## 本轮对话已结束 · 请沉淀值得长期记住的内容',
+    '请回顾刚刚结束的这轮对话，判断是否有值得写入长期记忆的：用户偏好/纠正/项目决策/踩坑教训。',
+    '若有，请用 `memory` 工具写入（track=user 存偏好/知识，track=agent 存行为/教训），做到严格去重——',
+    '与已有记忆重复或可用代码/文件重新推导的不要写。若本轮无可沉淀内容，忽略即可。',
+  ].join('\n')
+}
+
+// 监听 DSH 会话事件：turn/end(completed/success) 时标记本会话"待沉淀"
+function handleSessionEvent(session, rawEvent) {
+  try {
+    const ev = rawEvent ?? {}
+    const evType = typeof ev.type === 'string' ? ev.type : ''
+    if (evType === 'turn/end') {
+      const reason = ev.data?.reason?.kind ?? ev.data?.reason
+      const done = typeof reason === 'string' && (reason === 'completed' || reason === 'success')
+      if (done) {
+        _lastTurnEnd = Date.now()
+        _lastTurnEndSession = session?.id ?? ''
+        markSummaryPending(_lastTurnEndSession)
+      }
+    }
+  } catch { /* 静默，不影响会话 */ }
+}
+
 // ---------- 审批门（分级：重要 ask / 普通 auto；审批不可用按 approvalFallback 降级） ----------
 
 async function gateWrite(ctx, { track, text }) {
@@ -1397,6 +1459,23 @@ export function apply(ctx, config = {}) {
     text: () => renderSnapshot(),
   })
 
+  // 1.5 会话结束自动沉淀（v0.6）：
+  //    - 监听会话事件，turn/end(completed) 时标记"待沉淀"
+  //    - 下一轮组装提示词时注入总结指令，模型据此用 memory add 沉淀本轮
+  //    - 完成后自动清标记（5 分钟超时防御），避免重复/污染
+  try {
+    ctx.on('session/event', (session, rawEvent) => {
+      handleSessionEvent(session, rawEvent)
+    }, { global: true })
+    ctx.systemPrompt.section({
+      name: 'memory:session-summary',
+      order: 200,
+      text: () => sessionSummarySectionText(),
+    })
+  } catch {
+    // 会话事件/提示词注入不可用则静默降级（不影响记忆读写）
+  }
+
   // 2. memory 工具 + memory_recall 工具
   ctx.tools.register(makeMemoryTool(ctx))
   ctx.tools.register(makeRecallTool())
@@ -1603,6 +1682,10 @@ export const __internals = {
   latestBackup,
   migrateMarkdownToDb,
   ensureVectors,
+  sessionSummarySectionText,
+  handleSessionEvent,
+  markSummaryPending,
+  clearSummaryPending,
   setConfig: (c) => { CFG = { ...DEFAULTS, ...c } },
   getConfig: () => ({ ...CFG }),
   paths: PATHS,
