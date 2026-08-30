@@ -4,6 +4,16 @@
 
 给 DeepSeek Harness (DSH) 的跨会话记忆插件：像人脑一样分层记、分级审、会代谢、透明可改。
 
+## v0.6（2026-08-31）· 架构重构 + 会话结束自动沉淀
+
+- **模块化架构**：`index.mjs` 精简为接线层，业务拆分至专门模块——`shared`（配置/工具/审计/冲突）、`store`（写入/钉/删/回滚/迁移）、`retrieve`（查询/语义）、`meta`（代谢/反思）、`snapshot`（冻结快照/会话沉淀）、`gate`（审批/自检）、`notify`（桌宠气泡）、`session-state`（会话沉淀状态）。行为不变，57 测试全绿。
+- **会话结束自动沉淀**：一轮对话结束（`turn/end` completed）后，插件在下次提示词组装时注入"沉淀本轮"指令，模型据此把值得长期记住的内容用 `memory add` 写入；写即清标记、5 分钟防呆、严格去重。
+- **修复**：`package.json` `files` 白名单补全全部新模块（否则发布后别人更新会 `ERR_MODULE_NOT_FOUND`）；`/reflect` `/dream` 端点改为读取请求体 `dryRun`。
+
+## v0.5.3（2026-08-31）· UI 现代化
+
+- 设置页改用「巨构视觉」设计语言（暖纸底、金线强调、圆角卡片、聚焦光环），不再默认蓝；peerDeps 升至 `>=0.1.1-rc.1`。
+
 - SQLite 数据层（`~/.dsh/biomemory/biomemory.db`，node:sqlite 内置、WAL 模式、零外部依赖），旧 Markdown 记忆首次启动自动迁移（保留只读备份）
 - `memory` 工具：add / query / update / remove / list / pin / unpin / dream / audit
 - 会话启动自动注入**冻结记忆快照**（锁定记忆与用户偏好最高优先级，其次近期知识/行为；与偏好冲突的行为记忆置顶并标注 `[冲突]`）
