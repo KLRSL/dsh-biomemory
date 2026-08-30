@@ -40,7 +40,7 @@ import { tokenize, tfidfVectors, cosine, semanticSearch, queryEntries } from './
 import { runDream, clusterEntries, latestReflection, runReflect } from './meta.mjs'
 import { renderSnapshot, sessionSummarySectionText, handleSessionEvent } from './snapshot.mjs'
 import { gateWrite, selfHeal } from './gate.mjs'
-import { setPetEndpoint, petNotify } from './notify.mjs'
+import { setPetEndpoint, getPetEndpoint, petNotify } from './notify.mjs'
 import {
   markSummaryPending, clearSummaryPending, isSummaryPending, getSummarySid,
   getLastTurnEnd, setLastTurnEnd,
@@ -479,12 +479,14 @@ export function apply(ctx, config = {}) {
             return send(200, { ok: true, config: CFG, petEndpoint: getPetEndpoint() })
           }
           if (req.method === 'POST' && p === '/dream') {
-            const r = runDream({ dryRun: (await readBodyJson(req)).dryRun === true })
-            return send(200, { ok: true, report: { ...r, dryRun: true } })
+            const dry = (await readBodyJson(req)).dryRun === true
+            const r = runDream({ dryRun: dry })
+            return send(200, { ok: true, report: { ...r, dryRun: dry } })
           }
           if (req.method === 'POST' && p === '/reflect') {
-            const r = runReflect({ dryRun: true })
-            return send(200, { ok: true, report: { ...r, dryRun: true } })
+            const dry = (await readBodyJson(req)).dryRun === true
+            const r = runReflect({ dryRun: dry })
+            return send(200, { ok: true, report: { ...r, dryRun: dry } })
           }
           if (req.method === 'GET' && p === '/entries') {
             const q = url.searchParams.get('q') || ''
@@ -575,8 +577,6 @@ export function apply(ctx, config = {}) {
 async function readBodyJson(req) {
   try { return JSON.parse(await readBody(req)) } catch { return {} }
 }
-
-import { getPetEndpoint } from './notify.mjs'
 
 // ---------- 测试用内部接口（不参与 DSH 装配） ----------
 
