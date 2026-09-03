@@ -2,9 +2,11 @@
 
 > [中文文档](README.zh-CN.md) · [English](README.md)
 
+> **Version v0.6.0** · MIT License · **Compatibility**: DeepSeek Harness ≥ 0.1.1-rc.2 (current latest line; tested on 0.1.2-rc.1 too)
+
 A cross-session memory plugin for DeepSeek Harness (DSH), designed like a human brain: layered memory, graded approval, memory metabolism, fully transparent.
 
-**v0.6 (2026-08-31) — architecture refactor + session-end auto-consolidation:**
+**v0.6.0 (2026-08-31) — architecture refactor + session-end auto-consolidation:**
 
 - **Modular architecture**: `index.mjs` slimmed to a wiring layer; business logic split into focused modules — `shared` (config/utils/audit/conflict), `store` (write/pin/remove/restore/migration), `retrieve` (query/semantic), `meta` (metabolism/reflect), `snapshot` (frozen snapshot/session consolidator), `gate` (approval/self-heal), `notify` (pet bubble), `session-state`. No behavior change; 57 tests green.
 - **Session-end auto-consolidation**: after a turn ends (`turn/end` completed), the plugin injects a "consolidate this turn" directive into the next prompt assembly; the model then writes anything worth remembering via `memory add`. Cleared on write, 5-minute stale guard, deduplication respected.
@@ -190,12 +192,12 @@ Keyword matching runs first; when hits are insufficient, results are supplemente
 ## Compatibility
 
 - Node >= 22.19.0
-- `@deepseek-ai/dsh-*` 0.1.0-rc.5 runtime (implemented against actual lib sources)
+- `@deepseek-ai/dsh-*` >= 0.1.1-rc.2 runtime (implemented against actual lib sources)
 
 ## Troubleshooting (FAQ)
 
 - **Node version**: requires Node >= 22.19.0; older versions may fail to load the plugin.
-- **DSH runtime compatibility**: targets `@deepseek-ai/dsh-*` 0.1.0-rc.5 — check the version of the runtime you actually run.
+- **DSH runtime compatibility**: targets `@deepseek-ai/dsh-*` >= 0.1.1-rc.2 (current latest line; tested on 0.1.2-rc.1 too) — check the version of the runtime you actually run.
 - **Memory directory issues**: if writes fail, check read/write permissions on the memory root; if `DSH_MEMORY_ROOT` is set, it must point to an existing, writable directory.
 - **Native module conflicts**: this plugin has **no native dependencies** — it is pure JS, so it cannot clash with native modules of other plugins.
 
