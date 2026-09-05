@@ -12,8 +12,10 @@ import os from 'node:os'
 import * as db from './db.mjs'
 
 // 记忆根目录：默认 ~/.dsh/memory（可用环境变量 DSH_MEMORY_ROOT 覆盖）
-// v0.5：SQLite 为主存储（~/.dsh/biomemory/biomemory.db），Markdown 保留为
-// 迁移源与只读备份（首次启动自动导入）
+// v0.5：SQLite 为主存储（~/.dsh/biomemory/biomemory.db）。
+// v0.6.1：单轨制——SQLite 是唯一运行时数据源；Markdown（hot/projects/longterm/
+// preferences）保留为只读备份与人工查看层，不再参与任何运行时写入/读取
+// （仅首次启动的一次性历史迁移会读它，之后永不读取）。
 export const MEMORY_ROOT = process.env.DSH_MEMORY_ROOT || path.join(os.homedir(), '.dsh', 'memory')
 
 export const TOOL_NAME = 'memory'
@@ -134,6 +136,14 @@ export function nowStamp() {
   const d = new Date()
   const p = (n) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
+
+// 单轨制：偏好文本一律从 SQLite 读（v0.6.1 替代 readFile(PATHS.preferences)，
+// 消除对 Markdown 的运行时依赖——手工编辑 Markdown 不再影响冲突检测）
+export function prefsText() {
+  db.openDb()
+  const prefs = db.listEntries({ fragmentType: 'preference', status: 'active', limit: 500 })
+  return prefs.map((e) => e.text).join('\n')
 }
 
 export function isoNow() { return new Date().toISOString() }

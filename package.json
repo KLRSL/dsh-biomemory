@@ -1,7 +1,7 @@
 {
   "name": "dsh-biomemory",
   "description": "生物仿生记忆系统（Biomimetic Memory for DeepSeek Harness）v0.6.3: SQLite 数据层（node:sqlite 内置，零外部依赖）+ 本地嵌入模型语义检索（bge-small-zh-v1.5，离线）+ exact/semantic/hybrid 三模式 + RRF 融合 + Markdown 自动迁移 + 冻结快照注入（Memory/Retrieved/Applied 三层分离）+ 审批门 + 记忆代谢（断点续跑）+ 记忆钉（锁定=不遗忘 + relevance admission）+ 记忆类别与来源（memory_class/source_ref，建议≠决定）+ 结构化审计 + 深度反思 + 知识页 + 可编辑条目 + 冲突浮出置顶 + /memory 命令；管理 UI 按记忆功能设计语言（档案+时光流/紫粉品牌色）+ 深色适配（DSH 主题跟随）",
-  "version": "0.6.3",
+  "version": "0.6.4",
   "type": "module",
   "main": "./index.mjs",
   "exports": {
@@ -50,7 +50,7 @@
     "client.js",
     "cordis.patch.yml",
     "README.md",
-    "README.zh-CN.md",
+    "README.en.md",
     "LICENSE"
   ],
   "repository": {

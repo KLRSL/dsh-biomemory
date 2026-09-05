@@ -225,9 +225,8 @@ export function writeEntry({ track, text, sessionId, approved, mode, source }) {
     memory_class: memoryClass,
   })
   db.audit('WRITE', { entry_id: entryId, detail: { fp, track, approved: modeLabel, fallback: mode === 'fallback' ? true : undefined, memory_class: memoryClass, source_ref: sourceRef } })
-  if (track === 'user') {
-    appendFile(PATHS.preferences, `- [${nowStamp()}] ${text.trim()}\n`)
-  }
+  // v0.6.1 单轨制：不再 append 到 preferences.md——SQLite 是唯一运行时数据源，
+  // Markdown 仅保留为只读备份（曾因双轨导致 Markdown 新条目永不注入，见 2026-09-06 整理）
   // v0.6 会话沉淀：模型调 memory add 写入成功 → 视为"已沉淀"，清除待沉淀标记
   clearSummaryPending()
   petNotify('记忆已保存', `${track === 'user' ? '偏好' : '经验'}：${text}`)

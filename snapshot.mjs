@@ -8,7 +8,7 @@
 
 import * as db from './db.mjs'
 import {
-  PATHS, readFile, estimateTokens, detectConflict, CFG,
+  PATHS, estimateTokens, detectConflict, CFG, prefsText,
 } from './shared.mjs'
 import {
   isSummaryPending, getSummarySid, getLastTurnEnd, setLastTurnEnd, markSummaryPending, clearSummaryPending,
@@ -33,7 +33,7 @@ export function renderSnapshot() {
   // 自动召回排序：权重高、新近的优先（预算内只注入最有价值的）
   const rank = (a, b) => (b.weight - a.weight) || (String(b.created_at || '').localeCompare(String(a.created_at || '')))
   const fmt = (e) => `- [${e.layer}]${e.memory_class ? `[${e.memory_class}]` : ''} ${e.text}`
-  const prefsText = readFile(PATHS.preferences)
+  const prefsTextStr = prefsText()
   const parts = []
   if (prefs) parts.push('## 用户偏好（最高优先级，写入须尊重）\n' + prefs)
   if (pinned.length) {
@@ -47,11 +47,11 @@ export function renderSnapshot() {
   if (bb.length) {
     // 与偏好冲突的行为记忆置顶并标注（冲突浮出，会话内即可发现）
     const bbSorted = [...bb].sort((a, b) => {
-      const ca = a.kind === '行为' && detectConflict(a, prefsText) ? 1 : 0
-      const cb = b.kind === '行为' && detectConflict(b, prefsText) ? 1 : 0
+      const ca = a.kind === '行为' && detectConflict(a, prefsTextStr) ? 1 : 0
+      const cb = b.kind === '行为' && detectConflict(b, prefsTextStr) ? 1 : 0
       return (cb - ca) || rank(a, b)
     })
-    parts.push('## 近期行为记忆\n' + bbSorted.map((e) => `- [${e.layer}]${e.memory_class ? `[${e.memory_class}]` : ''}${e.kind === '行为' && detectConflict(e, prefsText) ? ' [冲突]' : ''} ${e.text}`).join('\n'))
+    parts.push('## 近期行为记忆\n' + bbSorted.map((e) => `- [${e.layer}]${e.memory_class ? `[${e.memory_class}]` : ''}${e.kind === '行为' && detectConflict(e, prefsTextStr) ? ' [冲突]' : ''} ${e.text}`).join('\n'))
   }
   if (!parts.length) return ''
   const HEADER = `# 记忆快照（dsh-biomemory，会话冻结）\n\n> 本快照 = Applied Context（已注入 prompt 供参考）。Memory（存储层）与 Retrieved（查询候选）不在此列；检索到 ≠ 已采用，执行与否以模型结合上下文的判断为准。\n\n`

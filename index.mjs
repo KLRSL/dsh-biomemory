@@ -29,7 +29,7 @@ import {
   loadConfig, saveConfig,
   ensureDirs, readFile, writeFile, appendFile, nowStamp, isoNow, tsToIso,
   fingerprint, isImportant, estimateTokens, audit, queryAudit, auditAggregate,
-  detectConflict, zhBigrams, dbgLog, MEMORY_ROOT,
+  detectConflict, zhBigrams, dbgLog, MEMORY_ROOT, prefsText,
 } from './shared.mjs'
 import {
   parseEntryLine, formatEntryLine, readEntries, scanAllFiles, rewriteFile,
@@ -498,7 +498,7 @@ export function apply(ctx, config = {}) {
             const layer = url.searchParams.get('layer') || ''
             const mode = url.searchParams.get('mode') || 'hybrid'
             const limit = Math.min(500, Number(url.searchParams.get('limit')) || 200)
-            const prefsText = readFile(PATHS.preferences)
+            const prefsTextStr = prefsText()
             if (q) {
               const res = await queryEntries(q, limit, { mode, minWeight: 0 })
               const seen = new Set()
@@ -506,12 +506,12 @@ export function apply(ctx, config = {}) {
               for (const r of res) {
                 if (seen.has(r.fp)) continue
                 seen.add(r.fp)
-                merged.push({ layer: r.layer, fp: r.fp, kind: r.kind, mode: r.mode, weight: r.weight, hits: r.hits, ts: r.ts, pinned: r.pinned, text: r.text, fragment_type: r.fragment_type, semantic: r.semantic, status: entryStatus(r, prefsText) })
+                merged.push({ layer: r.layer, fp: r.fp, kind: r.kind, mode: r.mode, weight: r.weight, hits: r.hits, ts: r.ts, pinned: r.pinned, text: r.text, fragment_type: r.fragment_type, semantic: r.semantic, status: entryStatus(r, prefsTextStr) })
               }
               return send(200, { ok: true, entries: merged.slice(0, limit), mode })
             }
             const all = db.listEntries({ layer: layer || undefined, limit: 1000 })
-              .map((e) => ({ layer: e.layer, fp: e.fp, kind: e.kind, mode: e.mode, weight: e.weight, hits: e.hits, ts: e.created_at, pinned: e.pinned, text: e.text, fragment_type: e.fragment_type, status: entryStatus(e, prefsText) }))
+              .map((e) => ({ layer: e.layer, fp: e.fp, kind: e.kind, mode: e.mode, weight: e.weight, hits: e.hits, ts: e.created_at, pinned: e.pinned, text: e.text, fragment_type: e.fragment_type, status: entryStatus(e, prefsTextStr) }))
             all.sort((a, b) => (b.status === 'conflict') - (a.status === 'conflict') || (b.pinned - a.pinned) || (b.weight - a.weight) || String(b.ts || '').localeCompare(String(a.ts || '')))
             return send(200, { ok: true, entries: all.slice(0, limit) })
           }

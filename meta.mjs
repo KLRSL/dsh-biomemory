@@ -10,7 +10,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import * as db from './db.mjs'
 import {
-  MEMORY_ROOT, PATHS, readFile, writeFile, nowStamp, CFG, detectConflict, audit,
+  MEMORY_ROOT, PATHS, readFile, writeFile, nowStamp, CFG, detectConflict, audit, prefsText,
 } from './shared.mjs'
 import { tokenize, cosine } from './retrieve.mjs'
 
@@ -28,7 +28,7 @@ export function runDream(opts = {}) {
   // 断点续跑（文档 P0-002）：上次中断位置恢复；每 100 条写一次检查点
   const checkpointKey = 'dream_checkpoint'
   const resumeFp = !dryRun && opts.resume !== false ? db.metaGet(checkpointKey) : null
-  const prefsText = readFile(PATHS.preferences)
+  const prefsTextStr = prefsText()
   const now = Date.now()
   const entries = db.allEntries()
   let started = false
@@ -64,7 +64,7 @@ export function runDream(opts = {}) {
       changed = true
     }
     // 3. 冲突仲裁（v0.5.2 改为「浮出待裁决」）：与偏好冲突的行为记忆不再自动降权
-    if (e.kind === '行为' && detectConflict(e, prefsText)) {
+    if (e.kind === '行为' && detectConflict(e, prefsTextStr)) {
       report.conflicted++
       report.items.push({ op: 'CONFLICT', layer: e.layer, fp: e.fp, entry_id: e.entry_id, note: '浮出待用户裁决（不降权不归档）' })
       continue
@@ -164,8 +164,8 @@ export function runReflect(opts = {}) {
   const prev7 = entries.filter((e) => { const a = ageOf(e); return a !== null && now - a >= 7 * DAY && now - a < 14 * DAY })
   const live = entries.filter((e) => e.layer !== 'preferences' && !e.layer.startsWith('archive'))
   const clusters = clusterEntries(live)
-  const prefsText = readFile(PATHS.preferences)
-  const conflicts = entries.filter((e) => e.layer.startsWith('hot/behavior') && detectConflict(e, prefsText))
+  const prefsTextStr2 = prefsText()
+  const conflicts = entries.filter((e) => e.layer.startsWith('hot/behavior') && detectConflict(e, prefsTextStr2))
   const forget = live
     .filter((e) => !e.pinned && e.weight < CFG.decayThreshold * 1.5)
     .sort((a, b) => a.weight - b.weight)
