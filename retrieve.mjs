@@ -135,5 +135,7 @@ export async function queryEntries(query, limit = CFG.maxQueryResults, opts = {}
   if (!ql) {
     out.sort((a, b) => (b.status === 'conflict') - (a.status === 'conflict'))
   }
+  // DSH 0.1.2-rc.1 起工具返回值须为 lossless JSON（dsh-tools 校验拒绝 undefined/NaN/-0）
+  for (const it of out) for (const k of Object.keys(it)) if (it[k] === undefined || (typeof it[k] === 'number' && !Number.isFinite(it[k]))) it[k] = null
   return out.slice(0, limit)
 }
