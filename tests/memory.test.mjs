@@ -476,3 +476,36 @@ test('removeEntry：删除条目并自动备份数据库（v0.5：SQLite）', as
   assert.equal(db.getByFp('r1'), undefined, '条目已从 SQLite 删除')
   assert.ok(I.removeEntry('nope').ok === false, '不存在的 fp 返回失败')
 })
+
+// ============================================================================
+// 19. 记忆类别与来源（v0.6.1：memory_class / source_ref，建议≠决定）
+// ============================================================================
+
+test('inferMemoryClass：用户决定/偏好/事实 与 模型建议/推测 正确区分', async () => {
+  const { inferMemoryClass } = await import('../store.mjs')
+  assert.equal(inferMemoryClass({ track: 'user', text: '大家都决定用 React 18 方案' }), 'user_decision')
+  assert.equal(inferMemoryClass({ track: 'user', text: '用户更喜欢暗色主题' }), 'user_preference')
+  assert.equal(inferMemoryClass({ track: 'user', text: '今天部署了 3 个服务' }), 'fact')
+  assert.equal(inferMemoryClass({ track: 'agent', text: '建议改用镜像源，可以试试 npmmirror' }), 'model_suggestion')
+  assert.equal(inferMemoryClass({ track: 'agent', text: '推测可能是内存泄漏导致' }), 'model_inference')
+})
+
+test('writeEntry：落库 memory_class + source_ref（来源可溯源，建议≠决定）', async () => {
+  const db = await import('../db.mjs')
+  const { writeEntry } = await import('../store.mjs')
+  const a = writeEntry({ track: 'user', text: '拍板：桌宠 UI 用 dsh-fuse 设计令牌', sessionId: 's-abc', source: '用户原话' })
+  const b = writeEntry({ track: 'agent', text: '建议桌宠动画可以用 QPropertyAnimation 实现', sessionId: 's-abc' })
+  const ea = db.getByFp(a.fp)
+  const eb = db.getByFp(b.fp)
+  assert.equal(ea.memory_class, 'user_decision')
+  assert.equal(ea.source_ref, '用户原话')
+  assert.equal(eb.memory_class, 'model_suggestion')
+  assert.equal(eb.source_ref, 'session:s-abc')
+})
+
+test('db schema：source_ref / memory_class 列存在并可查询', async () => {
+  const db = await import('../db.mjs')
+  const cols = db.openDb().prepare("PRAGMA table_info(entries)").all().map((c) => c.name)
+  assert.ok(cols.includes('source_ref'))
+  assert.ok(cols.includes('memory_class'))
+})

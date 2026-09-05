@@ -8,14 +8,13 @@ window.__ModuleLoader__.load({
 		let prim = require("@deepseek-ai/dsh-client-ui-primitives");
 		//#region src/client/index.ts
 		/**
-		 * Biomemory settings page — 记忆工作台（设计稿 v2 · 巨构视觉）
+		 * Biomemory settings page — 记忆工作台（设计稿 v3 · 现代极简）
 		 *
 		 * 用户定稿（2026-08-19）：五个入口 = 概览 / 知识库 / 代谢 / 反思 / 设置
-		 * 设计语言（借鉴「巨构视觉」）：
-		 *   - 宣纸暖底 #F5F0EB（浅）/ 墨底（深）
-		 *   - 墨色文字 #1C1917，弱化 #8A857E
-		 *   - 金线分割 #C9A96A，朱砂点缀 #B45309
-		 *   - 圆角 12/16，4/8px 栅格，字号阶梯
+		 * 设计语言（现代极简，dsh-fuse default 主题令牌）：
+		 *   - 底色 neutralSurface #F5F6F8，白色卡片分层
+		 *   - 主色 #7C3AED 紫 / 辅色 #C026D3 粉紫 / 强调 #0EA5E9 青，中性色系，低饱和状态色
+		 *   - 圆角 8/12/16，4/8px 栅格，字号 12/14/16/20/28，行高正文 1.7 / 标题 1.25
 		 */
 		const copy = {
 			"zh-CN": {
@@ -263,87 +262,128 @@ window.__ModuleLoader__.load({
 			const primary = (navigator.languages?.[0] || navigator.language || "en").toLowerCase();
 			return primary === "zh-cn" || primary.startsWith("zh-hans") ? copy["zh-CN"] : copy.en;
 		}
+		// 主题探测（双通道）：优先 DSH 前端标记（documentElement/body 的 data-ds-dark-theme），其次系统主题
+		function detectDshTheme() {
+			try {
+				const attr = (document.documentElement.getAttribute("data-ds-dark-theme")) || (document.body.getAttribute("data-ds-dark-theme"));
+				if (attr !== null && attr !== undefined && attr !== "") return attr === "light" ? "light" : "dark";
+			} catch (error) {
+				/* 探测失败则回退系统主题 */
+			}
+			return typeof window.matchMedia === "function" && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+		}
+		function applyDshTheme() {
+			const theme = detectDshTheme();
+			const roots = document.querySelectorAll(".bm-page");
+			for (const root of roots) root.setAttribute("data-dsh-theme", theme);
+		}
 		const inject = ["slots"];
-		// 巨构视觉：宣纸/墨 + 金线 + 朱砂
+		// 现代极简：dsh-fuse 设计令牌（配色/间距/圆角/阴影唯一来源，见 ../dsh-fuse/config/theme.json themes.default）
 		const styles = `
-.bm-page{display:flex;flex-direction:column;gap:20px;max-width:880px;color:var(--dsw-alias-label-primary,#1C1917);font-size:14px;line-height:1.7}
-.bm-page h3{margin:0;font-size:22px;font-weight:700;letter-spacing:.01em}
-.bm-page h4{margin:0 0 12px;font-size:15px;font-weight:600;display:flex;align-items:center;gap:8px}
-.bm-page h4::before{content:"";width:4px;height:16px;border-radius:999px;background:#B45309;flex:none}
-.bm-sub{color:var(--dsw-alias-label-tertiary,#8A857E);font-size:13px;margin-top:4px}
-.bm-tabs{display:flex;gap:4px;border-bottom:1px solid var(--dsw-alias-border-l2,#C9A96A);margin-bottom:4px;padding-bottom:0}
-.bm-tab{padding:9px 16px;border:1px solid transparent;border-bottom:2px solid transparent;border-radius:10px 10px 0 0;background:transparent;color:var(--dsw-alias-label-secondary,#8A857E);font-size:13px;font-weight:500;cursor:pointer;transition:all .15s ease}
-.bm-tab:hover{color:var(--dsw-alias-label-primary,#1C1917);background:rgba(201,169,106,.08)}
-.bm-tab.active{background:var(--dsw-alias-bg-layer-3,#F5F0EB);border-color:var(--dsw-alias-border-l2,#C9A96A);border-bottom-color:#B45309;color:var(--dsw-alias-label-primary,#1C1917);font-weight:600}
-.bm-block{padding:20px;border:1px solid var(--dsw-alias-border-l2,#C9A96A);border-radius:16px;background:var(--dsw-alias-bg-layer-3,#FBF8F2);display:flex;flex-direction:column;gap:14px;box-shadow:0 1px 2px rgba(28,25,23,.04)}
-.bm-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px}
-.bm-card{padding:14px 16px;border:1px solid var(--dsw-alias-border-l2,#C9A96A);border-radius:14px;background:var(--dsw-alias-bg-layer-2,#FFFDF8);display:flex;flex-direction:column;gap:4px;box-shadow:0 1px 2px rgba(28,25,23,.03)}
-.bm-card .v{font-size:26px;font-weight:700;color:var(--dsw-alias-label-primary,#1C1917);letter-spacing:-.01em}
-.bm-card .l{color:var(--dsw-alias-label-secondary,#8A857E);font-size:12.5px}
-.bm-card .n{font-size:12px;color:var(--dsw-alias-label-tertiary,#8A857E)}
-.bm-badge{display:inline-block;padding:3px 10px;border-radius:999px;font-size:11px;font-weight:600}
-.bm-badge.gold{background:rgba(180,83,9,.12);color:#B45309}
-.bm-root{color:var(--dsw-alias-label-tertiary,#8A857E);font-size:12.5px;word-break:break-all;font-family:ui-monospace,Consolas,monospace}
-.bm-config{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px}
+/* 令牌（唯一色值来源，只允许引用变量） */
+.bm-page{--bm-primary:#7C3AED;--bm-secondary:#C026D3;--bm-accent:#0EA5E9;--bm-primary-soft:color-mix(in srgb,var(--bm-primary) 10%,transparent);--bm-secondary-soft:color-mix(in srgb,var(--bm-secondary) 10%,transparent);--bm-accent-soft:color-mix(in srgb,var(--bm-accent) 10%,transparent);--bm-blend:color-mix(in srgb,var(--bm-primary) 3%,var(--bm-surface));--bm-chip-bg:color-mix(in srgb,var(--bm-border) 45%,transparent);--bm-bg:#FFFFFF;--bm-surface:#F5F6F8;--bm-text:#1A1A1A;--bm-muted:#6B7280;--bm-border:#E5E7EB;--bm-success:#2E7D32;--bm-warning:#ED6C02;--bm-error:#C62828;--bm-radius-sm:8px;--bm-radius-md:12px;--bm-radius-lg:16px;--bm-space-xs:4px;--bm-space-sm:8px;--bm-space-md:16px;--bm-space-lg:24px;--bm-space-xl:32px;--bm-shadow-card:0 1px 3px rgba(26,26,26,.08);--bm-shadow-float:0 10px 30px rgba(26,26,26,.14);display:flex;flex-direction:column;gap:24px;width:100%;max-width:880px;margin:0 auto;padding:24px;box-sizing:border-box;background:linear-gradient(180deg,var(--dsw-alias-bg-layer-2,var(--bm-surface)),var(--bm-blend));border-radius:var(--bm-radius-lg);color:var(--dsw-alias-label-primary,var(--bm-text));font-size:14px;line-height:1.7}
+.bm-page h3{margin:0;font-size:20px;font-weight:700;letter-spacing:-.01em;line-height:1.25}
+.bm-page h4{margin:0 0 12px;font-size:16px;font-weight:600;display:flex;align-items:center;gap:8px}
+.bm-page h4::before{content:"";width:3px;height:14px;border-radius:999px;background:var(--bm-primary);flex:none}
+.bm-sub{color:var(--dsw-alias-label-secondary,var(--bm-muted));font-size:14px;margin-top:4px}
+.bm-tabs{display:flex;gap:4px;border-bottom:1px solid var(--dsw-alias-border-l2,var(--bm-border));margin-bottom:16px}
+.bm-tab{padding:8px 14px;border:1px solid transparent;border-bottom:2px solid transparent;background:transparent;color:var(--dsw-alias-label-secondary,var(--bm-muted));font-size:14px;font-weight:500;cursor:pointer;transition:color .15s ease,background-color .15s ease,border-color .15s ease}
+.bm-tab:hover{color:var(--bm-text);background:color-mix(in srgb,var(--bm-primary) 6%,transparent)}
+.bm-tab.active{color:var(--bm-primary);border-bottom-color:var(--bm-primary);font-weight:600}
+.bm-block{padding:24px;border:1px solid var(--dsw-alias-border-l2,var(--bm-border));border-radius:var(--bm-radius-lg);background:var(--dsw-alias-bg-layer-1,var(--bm-bg));display:flex;flex-direction:column;gap:16px;box-shadow:var(--bm-shadow-card)}
+.bm-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(166px,1fr));gap:16px}
+.bm-card{padding:16px;border:1px solid var(--dsw-alias-border-l2,var(--bm-border));border-radius:var(--bm-radius-md);background:var(--dsw-alias-bg-layer-1,var(--bm-bg));display:flex;flex-direction:column;gap:4px;box-shadow:var(--bm-shadow-card)}
+.bm-block .bm-card{background:var(--dsw-alias-bg-layer-2,var(--bm-surface));box-shadow:none}
+.bm-card .v{font-size:28px;font-weight:700;color:var(--bm-text);letter-spacing:-.01em;line-height:1.25}
+@supports ((background-clip:text) or (-webkit-background-clip:text)){.bm-card .v{background:linear-gradient(90deg,var(--bm-primary),var(--bm-secondary) 55%,var(--bm-accent));-webkit-background-clip:text;background-clip:text;color:transparent}}
+.bm-card .l{color:var(--dsw-alias-label-secondary,var(--bm-muted));font-size:14px;font-weight:500}
+.bm-card .n{font-size:12px;color:var(--dsw-alias-label-secondary,var(--bm-muted))}
+.bm-badge{display:inline-flex;align-items:center;padding:2px 10px;border-radius:999px;font-size:12px;font-weight:600;background:var(--bm-primary-soft);color:var(--bm-primary)}
+.bm-badge.accent{background:var(--bm-accent-soft);color:var(--bm-accent)}
+.bm-badge.secondary{background:var(--bm-secondary-soft);color:var(--bm-secondary)}
+.bm-root{display:inline-block;padding:2px 8px;background:var(--dsw-alias-bg-layer-2,var(--bm-surface));border-radius:var(--bm-radius-sm);color:var(--dsw-alias-label-secondary,var(--bm-muted));font-size:12px;word-break:break-all;font-family:ui-monospace,Consolas,monospace}
+.bm-config{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:16px}
 .bm-field{display:flex;flex-direction:column;gap:6px;min-width:0}
-.bm-field label{color:var(--dsw-alias-label-primary,#1C1917);font-size:13px;font-weight:600}
-.bm-field input[type=number],.bm-field select{height:36px;padding:0 10px;border:1px solid var(--dsw-alias-border-l2,#C9A96A);border-radius:10px;background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-primary,#1C1917);font-size:13px;min-width:0;transition:border-color .15s ease,box-shadow .15s ease}
-.bm-field input[type=number]:focus,.bm-field select:focus{outline:none;border-color:#B45309;box-shadow:0 0 0 3px rgba(180,83,9,.12)}
+.bm-field label{color:var(--bm-text);font-size:14px;font-weight:600}
+.bm-field input[type=number],.bm-field select{height:38px;padding:0 12px;border:1px solid var(--dsw-alias-border-l2,var(--bm-border));border-radius:var(--bm-radius-sm);background:var(--bm-bg);color:var(--bm-text);font-size:14px;min-width:0;transition:border-color .15s ease,box-shadow .15s ease}
+.bm-field input[type=number]:focus,.bm-field select:focus{outline:none;border-color:var(--bm-primary);box-shadow:0 0 0 3px color-mix(in srgb,var(--bm-primary) 15%,transparent)}
 .bm-wide{grid-column:1/-1}
 .bm-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.bm-note{color:var(--dsw-alias-label-secondary,#8A857E);font-size:13px}
-.bm-ok{color:#2E7D32;font-weight:500}
-.bm-err{color:#C62828;font-weight:500}
-.bm-list{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px;max-height:300px;overflow:auto}
-.bm-list li{padding:7px 10px;border-radius:8px;background:var(--dsw-alias-bg-layer-2,#FBF8F2);color:var(--dsw-alias-label-primary,#1C1917);font-size:12.5px;word-break:break-all;border:1px solid rgba(201,169,106,.2)}
-.bm-summary{font-weight:600;color:var(--dsw-alias-label-primary,#1C1917)}
+.bm-note{color:var(--dsw-alias-label-secondary,var(--bm-muted));font-size:14px}
+.bm-ok{color:var(--bm-success);font-weight:500}
+.bm-err{color:var(--bm-error);font-weight:500}
+.bm-list{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px;max-height:300px;overflow:auto;counter-reset:bm-n}
+.bm-list li{padding:8px 12px;border-radius:var(--bm-radius-sm);background:var(--dsw-alias-bg-layer-2,var(--bm-surface));color:var(--bm-text);font-size:12px;word-break:break-all;border:1px solid var(--dsw-alias-border-l2,var(--bm-border));font-family:ui-monospace,Consolas,monospace;counter-increment:bm-n}
+.bm-list li::before{content:counter(bm-n) ".";margin-right:8px;color:var(--dsw-alias-label-secondary,var(--bm-muted));font-weight:600}
+.bm-summary{font-weight:600;color:var(--bm-text)}
 .bm-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.bm-toolbar select{height:36px;padding:0 10px;border:1px solid var(--dsw-alias-border-l2,#C9A96A);border-radius:10px;background:var(--dsw-alias-bg-layer-1,#fff);font-size:13px}
-.bm-entries{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px;max-height:560px;overflow:auto}
-.bm-entry{padding:12px 14px;border:1px solid var(--dsw-alias-border-l2,#C9A96A);border-radius:12px;background:var(--dsw-alias-bg-layer-2,#FBF8F2);transition:box-shadow .15s ease}
-.bm-entry:hover{box-shadow:0 2px 8px rgba(28,25,23,.06)}
-.bm-entry.pinned{border-color:#B45309;background:rgba(180,83,9,.06)}
-.bm-entry.conflict{border-color:#DC2626;background:rgba(220,38,38,.05);box-shadow:inset 3px 0 0 #DC2626}
-.bm-entry-text{color:var(--dsw-alias-label-primary,#1C1917);font-size:13px;word-break:break-all}
-.bm-badge-conflict{display:inline-block;margin-right:6px;padding:2px 8px;border-radius:999px;background:rgba(220,38,38,.12);color:#DC2626;font-size:11.5px;font-weight:600;vertical-align:1px}
+.bm-toolbar select{height:38px;padding:0 12px;border:1px solid var(--dsw-alias-border-l2,var(--bm-border));border-radius:var(--bm-radius-sm);background:var(--bm-bg);color:var(--bm-text);font-size:14px}
+.bm-entries{margin:0;padding:0;list-style:none;display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;max-height:560px;overflow:auto}
+.bm-entry{padding:16px;border:1px solid var(--dsw-alias-border-l2,var(--bm-border));border-left:3px solid var(--bm-border);border-radius:var(--bm-radius-md);background:var(--dsw-alias-bg-layer-1,var(--bm-bg));transition:box-shadow .15s ease,border-color .15s ease,filter .15s ease}
+.bm-entry.t-pref{border-left-color:var(--bm-primary)}
+.bm-entry.t-fact{border-left-color:var(--bm-accent)}
+.bm-entry.t-sec{border-left-color:var(--bm-secondary)}
+.bm-entry:hover{box-shadow:var(--bm-shadow-card)}
+.bm-entry.pinned{border-color:color-mix(in srgb,var(--bm-primary) 45%,var(--bm-border));background:color-mix(in srgb,var(--bm-primary) 5%,var(--bm-bg))}
+.bm-entry.conflict{border-color:color-mix(in srgb,var(--bm-error) 55%,var(--bm-border));background:color-mix(in srgb,var(--bm-error) 4%,var(--bm-bg));box-shadow:inset 3px 0 0 var(--bm-error)}
+.bm-entry-text{color:var(--bm-text);font-size:14px;word-break:break-all}
+.bm-badge-conflict{display:inline-block;margin-right:6px;padding:2px 8px;border-radius:999px;background:color-mix(in srgb,var(--bm-error) 10%,transparent);color:var(--bm-error);font-size:12px;font-weight:600;vertical-align:1px}
 .bm-entry-edit{display:flex;flex-direction:column;gap:8px;flex:1;min-width:0;width:100%}
 .bm-conflict-item .bm-entry-edit{flex:1 1 100%;min-width:0}
-.bm-entry-textarea{width:100%;min-height:96px;padding:12px 14px;border:1px solid var(--dsw-alias-border-l2,#C9A96A);border-radius:10px;background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-primary,#1C1917);font-size:15px;line-height:1.7;font-family:inherit;resize:vertical;box-sizing:border-box;transition:border-color .15s ease,box-shadow .15s ease}
-.bm-entry-textarea:focus{outline:none;border-color:#B45309;box-shadow:0 0 0 3px rgba(180,83,9,.12)}
-.bm-entry-meta{display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;color:var(--dsw-alias-label-tertiary,#8A857E);font-size:12px}
+.bm-entry-textarea{width:100%;min-height:96px;padding:12px 16px;border:1px solid var(--bm-border);border-radius:var(--bm-radius-sm);background:var(--bm-bg);color:var(--bm-text);font-size:14px;line-height:1.7;font-family:inherit;resize:vertical;box-sizing:border-box;transition:border-color .15s ease,box-shadow .15s ease}
+.bm-entry-textarea:focus{outline:none;border-color:var(--bm-primary);box-shadow:0 0 0 3px color-mix(in srgb,var(--bm-primary) 15%,transparent)}
+.bm-entry-meta{display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;color:var(--dsw-alias-label-secondary,var(--bm-muted));font-size:12px}
+.bm-entry-meta .bm-chip{display:inline-flex;align-items:center;padding:1px 8px;border-radius:999px;background:var(--bm-chip-bg);color:var(--dsw-alias-label-secondary,var(--bm-muted));font-size:12px;font-weight:500}
+.bm-entry-meta .bm-chip.c-pref{background:var(--bm-primary-soft);color:var(--bm-primary)}
+.bm-entry-meta .bm-chip.c-fact{background:var(--bm-accent-soft);color:var(--bm-accent)}
+.bm-entry-meta .bm-chip.c-sec{background:var(--bm-secondary-soft);color:var(--bm-secondary)}
 .bm-entry-ops{display:flex;gap:6px;margin-left:auto;align-items:center}
-.bm-cluster{margin:0;padding:12px 14px;border:1px solid var(--dsw-alias-border-l2,#C9A96A);border-radius:12px;background:var(--dsw-alias-bg-layer-2,#FBF8F2)}
-.bm-conflict-item{display:flex;flex-wrap:wrap;align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid rgba(220,38,38,.35);border-radius:10px;background:rgba(220,38,38,.05)}
-.bm-undo-bar{display:flex;align-items:center;gap:12px;padding:10px 14px;border:1px solid var(--dsw-alias-border-l2,#C9A96A);border-radius:12px;background:var(--dsw-alias-bg-layer-2,#FBF8F2);font-size:12.5px;color:var(--dsw-alias-label-secondary,#8A857E)}
+.bm-cluster{margin:0;padding:16px;border:1px solid var(--dsw-alias-border-l2,var(--bm-border));border-radius:var(--bm-radius-md);background:var(--dsw-alias-bg-layer-2,var(--bm-surface))}
+.bm-conflict-item{display:flex;flex-wrap:wrap;align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid color-mix(in srgb,var(--bm-error) 35%,var(--bm-border));border-radius:var(--bm-radius-sm);background:color-mix(in srgb,var(--bm-error) 4%,var(--bm-bg));box-shadow:inset 3px 0 0 var(--bm-error)}
+.bm-undo-bar{display:flex;align-items:center;gap:12px;padding:10px 14px;border:1px solid var(--dsw-alias-border-l2,var(--bm-border));border-radius:var(--bm-radius-md);background:var(--dsw-alias-bg-layer-2,var(--bm-surface));font-size:12px;color:var(--dsw-alias-label-secondary,var(--bm-muted))}
 .bm-conflict-item + .bm-conflict-item{margin-top:8px}
-.bm-conflict-text{flex:1;min-width:0;font-size:13px;color:#B91C1C;word-break:break-all}
-.bm-cluster-title{font-weight:600;color:var(--dsw-alias-label-primary,#1C1917);font-size:13px;margin-bottom:4px}
-.bm-cluster ul{margin:0;padding-left:18px;color:var(--dsw-alias-label-secondary,#8A857E);font-size:13px}
+.bm-conflict-text{flex:1;min-width:0;font-size:14px;color:var(--bm-error);word-break:break-all}
+.bm-cluster-title{font-weight:600;color:var(--bm-text);font-size:14px;margin-bottom:4px}
+.bm-cluster ul{margin:0;padding-left:18px;color:var(--dsw-alias-label-secondary,var(--bm-muted));font-size:14px}
 /* 概览：构成三卡 + 记忆流 */
 .bm-mode-row{display:flex;gap:8px;flex-wrap:wrap}
-.bm-mode-btn{padding:7px 14px;border:1px solid var(--dsw-alias-border-l2,#C9A96A);border-radius:10px;background:var(--dsw-alias-bg-layer-2,#FBF8F2);color:var(--dsw-alias-label-secondary,#8A857E);font-size:12.5px;font-weight:500;cursor:pointer;transition:all .15s ease}
-.bm-mode-btn:hover{border-color:#B45309;color:#B45309}
-.bm-mode-btn.active{border-color:#B45309;background:rgba(180,83,9,.1);color:#B45309;font-weight:600;box-shadow:0 0 0 1px rgba(180,83,9,.15)}
+.bm-mode-btn{padding:6px 14px;border:1px solid var(--dsw-alias-border-l2,var(--bm-border));border-radius:var(--bm-radius-sm);background:var(--bm-bg);color:var(--dsw-alias-label-secondary,var(--bm-muted));font-size:12px;font-weight:500;cursor:pointer;transition:all .15s ease}
+.bm-mode-btn:hover{border-color:var(--bm-primary);color:var(--bm-primary)}
+.bm-mode-btn.active{border-color:var(--bm-primary);background:color-mix(in srgb,var(--bm-primary) 8%,var(--bm-bg));color:var(--bm-primary);font-weight:600;box-shadow:0 0 0 1px color-mix(in srgb,var(--bm-primary) 15%,transparent)}
 .bm-search-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-.bm-search-row input{flex:1;min-width:200px;height:40px;padding:0 14px;border:1px solid var(--dsw-alias-border-l2,#C9A96A);border-radius:12px;background:var(--dsw-alias-bg-layer-1,#fff);font-size:13.5px;transition:border-color .15s ease,box-shadow .15s ease}
-.bm-search-row input:focus{outline:none;border-color:#B45309;box-shadow:0 0 0 3px rgba(180,83,9,.12)}
-.bm-flow-entry{display:flex;align-items:flex-start;gap:12px;padding:12px 0;border-bottom:1px solid var(--dsw-alias-border-l2,rgba(201,169,106,.35))}
+.bm-search-row input{flex:1;min-width:200px;height:40px;padding:0 14px;border:1px solid var(--dsw-alias-border-l2,var(--bm-border));border-radius:var(--bm-radius-sm);background:var(--bm-bg);color:var(--dsw-alias-label-primary,var(--bm-text));font-size:14px;transition:border-color .15s ease,box-shadow .15s ease}
+.bm-search-row input::placeholder{color:var(--dsw-alias-label-secondary,var(--bm-muted))}
+.bm-search-row input:focus{outline:none;border-color:var(--bm-primary);box-shadow:0 0 0 3px color-mix(in srgb,var(--bm-primary) 15%,transparent)}
+.bm-flow-entry{display:flex;align-items:flex-start;gap:12px;padding:12px 0;border-bottom:1px solid var(--dsw-alias-border-l2,var(--bm-border));position:relative;transition:filter .15s ease}
+.bm-flow-entry:not(:last-child)::after{content:"";position:absolute;left:3px;top:12px;bottom:-8px;width:1.5px;background:var(--dsw-alias-border-l2,var(--bm-border));transition:background .15s ease}
+.bm-flow-entry:hover::after{background:color-mix(in srgb,var(--bm-primary) 30%,var(--bm-border))}
 .bm-flow-entry:last-child{border-bottom:0}
-.bm-flow-mark{flex:none;width:9px;height:9px;border-radius:50%;margin-top:6px;background:var(--dsw-alias-border-l2,#C9A96A);box-shadow:0 0 0 3px rgba(201,169,106,.15)}
-.bm-flow-mark.gold{background:#B45309;box-shadow:0 0 0 3px rgba(180,83,9,.15)}
-.bm-flow-mark.red{background:#DC2626;box-shadow:0 0 0 3px rgba(220,38,38,.15)}
+.bm-flow-mark{flex:none;width:8px;height:8px;border-radius:50%;margin-top:6px;background:color-mix(in srgb,var(--bm-muted) 45%,transparent)}
+.bm-flow-mark.gold{background:var(--bm-primary);box-shadow:0 0 0 3px color-mix(in srgb,var(--bm-primary) 15%,transparent)}
+.bm-flow-mark.red{background:var(--bm-error);box-shadow:0 0 0 3px color-mix(in srgb,var(--bm-error) 15%,transparent)}
+.bm-flow-mark.c-pref{background:var(--bm-primary);box-shadow:0 0 0 3px color-mix(in srgb,var(--bm-primary) 15%,transparent)}
+.bm-flow-mark.c-fact{background:var(--bm-accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--bm-accent) 15%,transparent)}
+.bm-flow-mark.c-sec{background:var(--bm-secondary);box-shadow:0 0 0 3px color-mix(in srgb,var(--bm-secondary) 15%,transparent)}
 .bm-flow-text{flex:1;min-width:0}
-.bm-flow-text .t{font-size:13.5px;color:var(--dsw-alias-label-primary,#1C1917);word-break:break-all}
-.bm-flow-text .d{font-size:12px;color:var(--dsw-alias-label-tertiary,#8A857E);margin-top:2px}
+.bm-flow-text .t{font-size:14px;color:var(--bm-text);word-break:break-all}
+.bm-flow-text .d{font-size:12px;color:var(--dsw-alias-label-secondary,var(--bm-muted));margin-top:2px}
 .bm-flow-op{margin-left:auto;flex:none}
 /* 构成图表：行内紧凑条 */
 .bm-chart{display:flex;flex-direction:column;gap:8px;padding:4px 0}
-.bm-chart-row{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--dsw-alias-label-secondary,#8A857E)}
-.bm-chart-row .lbl{width:54px;flex:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.bm-chart-row .track{flex:1;max-width:170px;height:9px;border-radius:999px;background:rgba(201,169,106,.18);overflow:hidden}
+.bm-chart-row{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--dsw-alias-label-secondary,var(--bm-muted))}
+.bm-chart-row .lbl{width:56px;flex:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bm-chart-row .track{flex:1;max-width:170px;height:8px;border-radius:999px;background:color-mix(in srgb,var(--bm-muted) 12%,transparent);overflow:hidden}
 .bm-chart-row .fill{height:100%;border-radius:999px;min-width:2px}
-.bm-chart-row .val{width:32px;flex:none;text-align:right;font-family:ui-monospace,Consolas,monospace;color:var(--dsw-alias-label-primary,#1C1917)}
-.bm-chart-row .pct{width:36px;flex:none;text-align:right;color:var(--dsw-alias-label-tertiary,#8A857E)}
+.bm-chart-row .val{width:32px;flex:none;text-align:right;font-family:ui-monospace,Consolas,monospace;color:var(--bm-text)}
+.bm-chart-row .pct{width:36px;flex:none;text-align:right;color:var(--dsw-alias-label-secondary,var(--bm-muted))}
+/* 深色令牌覆盖（dsh-fuse themes.dark + 记忆品牌扩展：紫/粉紫/青 三层） */
+.bm-page[data-dsh-theme="dark"]{--bm-primary:#A78BFA;--bm-secondary:#F0ABFC;--bm-accent:#22D3EE;--bm-bg:#0F1115;--bm-surface:#1A1D23;--bm-text:#E8EAED;--bm-muted:#9AA0A6;--bm-border:#2A2E37;--bm-success:#34D399;--bm-warning:#FBBF24;--bm-error:#F87171;--bm-shadow-card:0 1px 3px rgba(0,0,0,.4);--bm-shadow-float:0 10px 30px rgba(0,0,0,.5)}
+.bm-page[data-dsh-theme="dark"] .bm-tab:hover{background:color-mix(in srgb,var(--bm-primary) 12%,transparent)}
+.bm-page[data-dsh-theme="dark"] .bm-entry:hover,.bm-page[data-dsh-theme="dark"] .bm-flow-entry:hover{filter:brightness(1.06)}
+.bm-page[data-dsh-theme="dark"] .bm-field input[type=number]:focus,.bm-page[data-dsh-theme="dark"] .bm-field select:focus,.bm-page[data-dsh-theme="dark"] .bm-search-row input:focus,.bm-page[data-dsh-theme="dark"] .bm-entry-textarea:focus{box-shadow:0 0 0 3px color-mix(in srgb,var(--bm-primary) 25%,transparent)}
+.bm-page[data-dsh-theme="dark"] .bm-entry.conflict{background:color-mix(in srgb,var(--bm-error) 8%,var(--bm-bg))}
+.bm-page[data-dsh-theme="dark"] .bm-conflict-item{background:color-mix(in srgb,var(--bm-error) 8%,var(--bm-bg))}
+.bm-page[data-dsh-theme="dark"] .bm-badge-conflict{background:color-mix(in srgb,var(--bm-error) 16%,transparent)}
 `;
 		const CONFIG_KEYS = ["halfLifeDays", "decayThreshold", "consolidateThreshold", "weightCap", "hotTokenLimit", "maxQueryResults", "autoDreamDays", "autoReflectDays"];
 		const { Button, Input, StateDot, IconSearchOutline16, IconTrashOutline16, IconRefreshOutline14, IconCheckOutline16, IconWarningOutline16, IconThinkOutline14, IconSettingsOutline16, IconLinkOutline14, IconBrowseOutline16 } = prim;
@@ -385,6 +425,22 @@ window.__ModuleLoader__.load({
 				return () => controller.abort();
 			}, []);
 			react.useEffect(() => loadStatus(), [loadStatus]);
+			// 挂载时给 .bm-page 打上 data-dsh-theme，并监听系统主题变化实时更新（纯 JS，不动 DOM 结构）
+			react.useEffect(() => {
+				applyDshTheme();
+				if (typeof window.matchMedia !== "function") return void 0;
+				const mq = window.matchMedia("(prefers-color-scheme: dark)");
+				const onChange = () => applyDshTheme();
+				if (typeof mq.addEventListener === "function") {
+					mq.addEventListener("change", onChange);
+					return () => mq.removeEventListener("change", onChange);
+				}
+				if (typeof mq.addListener === "function") {
+					mq.addListener(onChange);
+					return () => mq.removeListener(onChange);
+				}
+				return void 0;
+			});
 			const saveConfig = () => {
 				setSaveState({ kind: "saving" });
 				const body = {};
@@ -481,7 +537,7 @@ window.__ModuleLoader__.load({
 			const editBoxStyle = () => ({
 				minHeight: 96,
 				height: Math.max(96, Math.min(260, Math.ceil(editingText.length / 45) * 26 + 30)),
-				fontSize: 15,
+				fontSize: 14,
 				lineHeight: 1.7
 			});
 			// 反思页裁决冲突：就地编辑保存 → 从冲突列表移除（改掉冲突内容后不再冲突）
@@ -571,15 +627,20 @@ window.__ModuleLoader__.load({
 			const audit7d = stats.audit7d || [];
 			// ---------- 概览页 ----------
 			const overviewCards = [
-				[t.total, String(stats.total === void 0 ? "—" : stats.total), t.totalNote, stats.vectors !== void 0 ? `${t.vectorized} ${stats.vectors}/${stats.total}` : ""],
-				[t.pinned, String(stats.pinned === void 0 ? "—" : stats.pinned), t.pinnedNote, ""],
-				[t.model, modelReady ? "512维" : "降级", t.modelNote, modelReady ? t.modelTag : "keyword"],
-				[t.audit, String(stats.auditCount === void 0 ? "—" : stats.auditCount), t.auditNote, byWeight.find((r) => r.key === "10+") ? `10+ 权重 ${byWeight.find((r) => r.key === "10+").count} 条` : ""]
-			].map(([title, value, note, tag]) => (0, react.createElement)("div", {
+				[t.total, String(stats.total === void 0 ? "—" : stats.total), t.totalNote, stats.vectors !== void 0 ? `${t.vectorized} ${stats.vectors}/${stats.total}` : "", ""],
+				[t.pinned, String(stats.pinned === void 0 ? "—" : stats.pinned), t.pinnedNote, "", ""],
+				[t.model, modelReady ? "512维" : "降级", t.modelNote, modelReady ? t.modelTag : "keyword", "accent"],
+				[t.audit, String(stats.auditCount === void 0 ? "—" : stats.auditCount), t.auditNote, byWeight.find((r) => r.key === "10+") ? `10+ 权重 ${byWeight.find((r) => r.key === "10+").count} 条` : "", "secondary"]
+			].map(([title, value, note, tag, tone]) => (0, react.createElement)("div", {
 				key: title,
 				className: "bm-card"
-			}, (0, react.createElement)("div", { className: "v" }, value), (0, react.createElement)("div", { className: "l" }, title), note ? (0, react.createElement)("div", { className: "n" }, note) : null, tag ? (0, react.createElement)("span", { className: "bm-badge gold" }, tag) : null));
-			const typeColor = (k) => k === "preference" ? "#B45309" : k === "fact" ? "#8C6B3F" : "#C9A96A";
+			}, (0, react.createElement)("div", { className: "v" }, value), (0, react.createElement)("div", { className: "l" }, title), note ? (0, react.createElement)("div", { className: "n" }, note) : null, tag ? (0, react.createElement)("span", { className: "bm-badge" + (tone ? " " + tone : "") }, tag) : null));
+			// 品牌三色分配（功能色映射：偏好=紫 / 事实知识=青 / 其余行为笔记=粉紫），语义状态色（红/黄/绿）保留
+			const typeTone = (entry) => {
+				const k = entry.fragment_type || entry.kind || "note";
+				return k === "preference" ? "pref" : (k === "fact" || k === "knowledge") ? "fact" : "sec";
+			};
+			const typeColor = (k) => k === "preference" ? "var(--bm-primary)" : (k === "fact" || k === "knowledge") ? "var(--bm-accent)" : "var(--bm-secondary)";
 			const typeRows = byType.map((r) => {
 				const pct = stats.total ? Math.round(r.count / stats.total * 100) : 0;
 				return (0, react.createElement)("div", { key: r.key, className: "bm-chart-row" }, (0, react.createElement)("span", { className: "lbl" }, r.key), (0, react.createElement)("div", { className: "track" }, (0, react.createElement)("div", { className: "fill", style: { width: pct + "%", background: typeColor(r.key) } })), (0, react.createElement)("span", { className: "val" }, String(r.count)), (0, react.createElement)("span", { className: "pct" }, pct + "%"));
@@ -587,7 +648,7 @@ window.__ModuleLoader__.load({
 			const weightRows = byWeight.map((r) => {
 				const max = Math.max(1, ...byWeight.map((x) => x.count));
 				const pct = Math.round(r.count / max * 100);
-				return (0, react.createElement)("div", { key: r.key, className: "bm-chart-row" }, (0, react.createElement)("span", { className: "lbl" }, r.key === "10+" ? "≥10" : r.key), (0, react.createElement)("div", { className: "track" }, (0, react.createElement)("div", { className: "fill", style: { width: pct + "%", background: r.key === "10+" ? "#B45309" : "#C9A96A" } })), (0, react.createElement)("span", { className: "val" }, String(r.count)), (0, react.createElement)("span", { className: "pct" }, pct + "%"));
+				return (0, react.createElement)("div", { key: r.key, className: "bm-chart-row" }, (0, react.createElement)("span", { className: "lbl" }, r.key === "10+" ? "≥10" : r.key), (0, react.createElement)("div", { className: "track" }, (0, react.createElement)("div", { className: "fill", style: { width: pct + "%", background: r.key === "10+" ? "var(--bm-primary)" : r.key === "5-9" ? "var(--bm-accent)" : "var(--bm-secondary)" } })), (0, react.createElement)("span", { className: "val" }, String(r.count)), (0, react.createElement)("span", { className: "pct" }, pct + "%"));
 			});
 			const activityItems = audit7d.slice(0, 5).map((r) => {
 				const labels = { RECOVER: "恢复", MIGRATE: "迁移", RECALL: "召回", WRITE: "写入", DECAY: "衰减", ARCHIVE: "归档", CONSOLIDATE: "巩固", CONFLICT: "冲突", PIN: "锁定", UNPIN: "解锁" };
@@ -619,7 +680,7 @@ window.__ModuleLoader__.load({
 					return (0, react.createElement)("div", {
 						key: entry.fp,
 						className: "bm-flow-entry"
-					}, (0, react.createElement)("span", { className: "bm-flow-mark" + (isPinned ? " gold" : "") + (isConflict ? " red" : "") }), (0, react.createElement)("div", { className: "bm-flow-text" }, (0, react.createElement)("div", { className: "t" }, isConflict ? (0, react.createElement)("span", { className: "bm-badge-conflict" }, t.conflictBadge) : null, entry.text), (0, react.createElement)("div", { className: "d" }, `${entry.fragment_type || entry.kind || "note"} · 权重 ${entry.weight}${isPinned ? " · 锁定" : ""}`)), (0, react.createElement)("div", { className: "bm-flow-op" }, (0, react.createElement)(Button, {
+					}, (0, react.createElement)("span", { className: "bm-flow-mark" + (isPinned ? " gold" : "") + (isConflict ? " red" : "") + (!isPinned && !isConflict ? " c-" + typeTone(entry) : "") }), (0, react.createElement)("div", { className: "bm-flow-text" }, (0, react.createElement)("div", { className: "t" }, isConflict ? (0, react.createElement)("span", { className: "bm-badge-conflict" }, t.conflictBadge) : null, entry.text), (0, react.createElement)("div", { className: "d" }, `${entry.fragment_type || entry.kind || "note"} · 权重 ${entry.weight}${isPinned ? " · 锁定" : ""}`)), (0, react.createElement)("div", { className: "bm-flow-op" }, (0, react.createElement)(Button, {
 						variant: "ghost",
 						size: "sm",
 						onClick: () => entryOp(entry.fp, isPinned ? "unpin" : "pin")
@@ -719,7 +780,7 @@ window.__ModuleLoader__.load({
 					const isEditing = editingFp === entry.fp;
 					return (0, react.createElement)("li", {
 						key: entry.fp,
-						className: "bm-entry" + (entry.pinned ? " pinned" : "") + (isConflict ? " conflict" : "")
+						className: "bm-entry" + (entry.pinned ? " pinned" : "") + (isConflict ? " conflict" : "") + " t-" + typeTone(entry)
 					}, isEditing ? (0, react.createElement)("div", { className: "bm-entry-edit" }, (0, react.createElement)("textarea", {
 						className: "bm-entry-textarea",
 						style: editBoxStyle(),
@@ -733,7 +794,7 @@ window.__ModuleLoader__.load({
 						variant: "ghost",
 						size: "sm",
 						onClick: cancelEdit
-					}, t.cancel))) : (0, react.createElement)("div", { className: "bm-entry-text" }, entry.text), (0, react.createElement)("div", { className: "bm-entry-meta" }, (0, react.createElement)("span", null, `[${layerName(entry.layer)}]`), entry.pinned ? (0, react.createElement)("span", { className: "bm-ok" }, "PIN") : null, isConflict ? (0, react.createElement)("span", { className: "bm-badge-conflict" }, t.conflictBadge) : null, entry.mode ? (0, react.createElement)("span", null, entry.mode) : null, (0, react.createElement)("span", null, `${t.weight} ${entry.weight}`), (0, react.createElement)("span", null, `${t.hits} ${entry.hits}`), (0, react.createElement)("span", { className: "bm-entry-ops" }, (0, react.createElement)(Button, {
+					}, t.cancel))) : (0, react.createElement)("div", { className: "bm-entry-text" }, entry.text), (0, react.createElement)("div", { className: "bm-entry-meta" }, (0, react.createElement)("span", { className: "bm-chip c-" + typeTone(entry) }, `[${layerName(entry.layer)}]`), entry.pinned ? (0, react.createElement)("span", { className: "bm-ok" }, "PIN") : null, isConflict ? (0, react.createElement)("span", { className: "bm-badge-conflict" }, t.conflictBadge) : null, entry.mode ? (0, react.createElement)("span", { className: "bm-chip" }, entry.mode) : null, (0, react.createElement)("span", { className: "bm-chip" }, `${t.weight} ${entry.weight}`), (0, react.createElement)("span", { className: "bm-chip" }, `${t.hits} ${entry.hits}`), (0, react.createElement)("span", { className: "bm-entry-ops" }, (0, react.createElement)(Button, {
 						variant: "ghost",
 						size: "sm",
 						onClick: () => entryOp(entry.fp, entry.pinned ? "unpin" : "pin")

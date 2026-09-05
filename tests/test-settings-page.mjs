@@ -1,5 +1,5 @@
 // ============================================================================
-// test-settings-page.mjs — dsh-biomemory 记忆工作台（巨构视觉 v2）渲染冒烟
+// test-settings-page.mjs — dsh-biomemory 记忆工作台（现代极简）渲染冒烟
 // 运行: node tests\test-settings-page.mjs
 // 验证: 五 tab / 概览状态卡 / 构成图表 / 模式分段按钮 / 记忆流条目 / 知识库
 // ============================================================================
@@ -133,7 +133,7 @@ const appRoot = createRoot(document.getElementById('app'))
 appRoot.render(React.createElement(Component))
 await tick()
 
-console.log('\n[1] 页面骨架（巨构视觉）')
+console.log('\n[1] 页面骨架（现代极简）')
 {
   const h3 = document.querySelector('.bm-page h3')
   check('标题「记忆工作台」', !!h3 && h3.textContent.includes('记忆工作台'), h3 && h3.textContent)

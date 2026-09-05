@@ -2,9 +2,24 @@
 
 > [中文文档](README.zh-CN.md) · [English](README.md)
 
-> **版本 v0.6.0** · MIT License · **兼容性**：DeepSeek Harness ≥ 0.1.1-rc.2（当前 latest 线实测通过；0.1.2-rc.1 亦已测试）
+> **版本 v0.6.3** · MIT License · **兼容性**：DeepSeek Harness ≥ 0.1.1-rc.2（当前 latest 线实测通过；0.1.2-rc.1 亦已测试）
 
 给 DeepSeek Harness (DSH) 的跨会话记忆插件：像人脑一样分层记、分级审、会代谢、透明可改。
+
+## v0.6.2（2026-09-05）· 管理 UI 设计语言重构
+
+- 设置页/知识页五个 tab（概览/知识库/代谢/反思/设置）整体按「规则是骨架，语义是血肉，情绪是呼吸」设计语言重构：从「巨构视觉」切换到现代极简——neutralSurface #F5F6F8 底 + 白色圆角 16 卡片分层（max-width 880 居中）、主色下划线 tabs、4/8px 栅格留白、150ms 克制动效、字号阶梯 12/14/16/20/28。
+- 配色严格取自 dsh-fuse 设计令牌 default 主题（--bm-* CSS 变量：primary #2563EB / accent #0EA5E9 / border #E5E7EB / text #1A1A1A 等），除 13 个令牌定义外零硬编码色值，透明度一律 color-mix()。
+- 语义色保留：冲突=红色低饱和 tint + 左侧 inset 竖条、锁定=主色、正常=中性；图表 fill 按类别着色（preference/≥10=主色、fact=强调色、note=弱化色）。
+- 类名与挂载接口零变更（.bm-* / 五 tab / BiomemorySettingsPage），全部测试原样通过（60/60 + 设置页脚本 ✅）。
+
+## v0.6.1（2026-09-05）· 认知卫生与来源可溯源（评审建议落地）
+
+- **Memory ≠ Retrieved ≠ Applied 三层分离**：memory 工具描述与冻结快照头部明确三层概念——快照=Applied Context（已注入 prompt），Memory=存储层，Retrieved=查询候选；检索到 ≠ 已采用，执行与否由模型结合上下文判断。
+- **记忆钉语义修正（relevance admission）**：锁定 = 不遗忘（防衰减/归档），不再暗示"每轮必须执行"；快照锁定区带采纳门说明，与用户最新明确决定冲突时以最新决定为准。
+- **记忆类别 memory_class**：写入时自动推断 user_decision（用户明确决定）/ user_preference（用户偏好）/ fact（普通事实）/ model_suggestion（模型建议）/ model_inference（模型推测）——**建议 ≠ 决定**，模型建议绝不冒充用户拍板；查询/快照/列表均带类别标注。
+- **来源 source_ref**：memory add 支持 `source` 参数记录来源说明（缺省记 `session:<id>`），审计 WRITE 事件记录类别与来源，可溯源。
+- **schema 演进**：entries 表新增 `source_ref` / `memory_class` 列，旧库启动自动 ALTER 补列（幂等），向量/备份/回滚语义不变。
 
 ## v0.6.0（2026-08-31）· 架构重构 + 会话结束自动沉淀
 
@@ -14,7 +29,7 @@
 
 ## v0.5.3（2026-08-31）· UI 现代化
 
-- 设置页改用「巨构视觉」设计语言（暖纸底、金线强调、圆角卡片、聚焦光环），不再默认蓝；peerDeps 升至 `>=0.1.1-rc.1`。
+- 设置页改用「现代极简」设计语言（dsh-fuse default 令牌：neutralSurface 底 + 白色卡片、主色 #2563EB、圆角 8/12/16、4/8px 栅格、轻阴影），不再使用暖纸底/金线视觉；peerDeps 升至 `>=0.1.1-rc.1`。
 
 - SQLite 数据层（`~/.dsh/biomemory/biomemory.db`，node:sqlite 内置、WAL 模式、零外部依赖），旧 Markdown 记忆首次启动自动迁移（保留只读备份）
 - `memory` 工具：add / query / update / remove / list / pin / unpin / dream / audit

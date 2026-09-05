@@ -19,24 +19,30 @@ import {
 export function renderSnapshot() {
   db.openDb()
   const prefs = db.listEntries({ fragmentType: 'preference', status: 'active', limit: 200 })
-    .map((e) => `- [${e.created_at ? String(e.created_at).slice(0, 10) : ''}] ${e.text}`)
+    .map((e) => `- [${e.created_at ? String(e.created_at).slice(0, 10) : ''}]${e.memory_class ? `[${e.memory_class}]` : ''} ${e.text}`)
     .join('\n')
   const all = db.allEntries()
   const pinned = []
   const kb = []
   const bb = []
   for (const e of all) {
-    if (e.pinned) pinned.push(`- [锁定|${e.layer}] ${e.text}`)
+    if (e.pinned) pinned.push(`- [锁定|${e.layer}]${e.memory_class ? `[${e.memory_class}]` : ''} ${e.text}`)
     else if (e.fragment_type === 'preference' || e.kind === '知识') kb.push(e)
     else bb.push(e)
   }
   // 自动召回排序：权重高、新近的优先（预算内只注入最有价值的）
   const rank = (a, b) => (b.weight - a.weight) || (String(b.created_at || '').localeCompare(String(a.created_at || '')))
-  const fmt = (e) => `- [${e.layer}] ${e.text}`
+  const fmt = (e) => `- [${e.layer}]${e.memory_class ? `[${e.memory_class}]` : ''} ${e.text}`
   const prefsText = readFile(PATHS.preferences)
   const parts = []
-  if (prefs) parts.push('## 用户偏好（最高优先级）\n' + prefs)
-  if (pinned.length) parts.push('## 锁定记忆（最高优先级，不参与衰减）\n' + pinned.join('\n'))
+  if (prefs) parts.push('## 用户偏好（最高优先级，写入须尊重）\n' + prefs)
+  if (pinned.length) {
+    parts.push(
+      '## 锁定记忆（最高优先级，不参与衰减）\n' +
+      '> 说明：锁定 = 不遗忘（防衰减/归档），不代表每轮必须执行。与当前任务无关时按 relevance admission 忽略；' +
+      '与用户明确偏好冲突时以用户最新明确决定为准。\n' + pinned.join('\n')
+    )
+  }
   if (kb.length) parts.push('## 近期知识记忆\n' + kb.sort(rank).map(fmt).join('\n'))
   if (bb.length) {
     // 与偏好冲突的行为记忆置顶并标注（冲突浮出，会话内即可发现）
@@ -45,20 +51,21 @@ export function renderSnapshot() {
       const cb = b.kind === '行为' && detectConflict(b, prefsText) ? 1 : 0
       return (cb - ca) || rank(a, b)
     })
-    parts.push('## 近期行为记忆\n' + bbSorted.map((e) => `- [${e.layer}]${e.kind === '行为' && detectConflict(e, prefsText) ? ' [冲突]' : ''} ${e.text}`).join('\n'))
+    parts.push('## 近期行为记忆\n' + bbSorted.map((e) => `- [${e.layer}]${e.memory_class ? `[${e.memory_class}]` : ''}${e.kind === '行为' && detectConflict(e, prefsText) ? ' [冲突]' : ''} ${e.text}`).join('\n'))
   }
   if (!parts.length) return ''
-  let text = `# 记忆快照（dsh-biomemory，会话冻结）\n\n${parts.join('\n\n')}`
+  const HEADER = `# 记忆快照（dsh-biomemory，会话冻结）\n\n> 本快照 = Applied Context（已注入 prompt 供参考）。Memory（存储层）与 Retrieved（查询候选）不在此列；检索到 ≠ 已采用，执行与否以模型结合上下文的判断为准。\n\n`
+  let text = HEADER + parts.join('\n\n')
   // 热区 token 硬限制：超出部分截断（保留偏好与锁定）
   if (estimateTokens(text) > CFG.hotTokenLimit) {
-    let budget = CFG.hotTokenLimit - estimateTokens(`# 记忆快照（dsh-biomemory，会话冻结）\n\n${parts[0]}\n\n${parts[1] || ''}`)
+    let budget = CFG.hotTokenLimit - estimateTokens(HEADER + parts[0] + '\n\n' + (parts[1] || ''))
     const keep = [parts[0]]
     if (parts[1]) keep.push(parts[1])
     for (const p of parts.slice(2)) {
       const t = estimateTokens(p)
       if (t <= budget) { keep.push(p); budget -= t }
     }
-    text = `# 记忆快照（dsh-biomemory，会话冻结）\n\n${keep.join('\n\n')}`
+    text = HEADER + keep.join('\n\n')
   }
   return text
 }
