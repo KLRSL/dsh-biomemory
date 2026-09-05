@@ -1,227 +1,325 @@
 # dsh-biomemory · Biomimetic Memory for DeepSeek Harness
 
-> [中文文档](README.zh-CN.md) · [English](README.md)
+> [English](README.md) · [中文文档](README.zh-CN.md)
 
-> **Version v0.6.3** · MIT License · **Compatibility**: DeepSeek Harness ≥ 0.1.1-rc.2 (current latest line; tested on 0.1.2-rc.1 too)
+> **Version v0.6.3** · MIT License · **Compatibility**: DeepSeek Harness ≥ 0.1.1-rc.2 (verified on 0.1.2-rc.1) · Node ≥ 22.19.0
 
-A cross-session memory plugin for DeepSeek Harness (DSH), designed like a human brain: layered memory, graded approval, memory metabolism, fully transparent.
+A cross-session memory plugin for [DeepSeek Harness](https://github.com/deepseek-ai/dsh) (DSH) that works like a human brain: **layered recall, graded review, memory metabolism, fully transparent and editable**. The data layer is SQLite (built-in `node:sqlite`, WAL mode, zero external dependencies); legacy Markdown memories are migrated automatically on first start and kept as a read-only backup.
 
-**v0.6.2 (2026-09-05) — management UI rebuild on the design language:** settings/knowledge page (overview / knowledge / metabolism / reflect / settings tabs) switched from the old "monumental" look to modern minimalism — neutralSurface #F5F6F8 base with white radius-16 layered cards (max-width 880 centered), primary-underline tabs, 4/8px grid, 150ms restrained transitions; colors strictly from dsh-fuse default tokens (`--bm-*` variables, zero hardcoded hex); semantic colors kept (conflict=red tint + inset bar, pinned=primary, chart fills by class); zero class/API changes, all tests green (60/60 + settings-page script).
+## ✨ Features
 
-**v0.6.1 (2026-09-05) — cognitive hygiene & source traceability (code-review findings):**
-- **Memory ≠ Retrieved ≠ Applied**: tool description and snapshot header now state the three layers explicitly — the snapshot is the Applied Context (already injected), Memory is the store, Retrieved is query candidates; retrieved ≠ adopted.
-- **Pin semantics fixed (relevance admission)**: pin = no-forgetting only (exempt from decay/archive), no longer implies "must apply every turn"; snapshot lock section gains an admission note, latest explicit user decision wins on conflict.
-- **memory_class** auto-inferred on write: `user_decision` / `user_preference` / `fact` / `model_suggestion` / `model_inference` — suggestion ≠ decision; shown in query/snapshot/list output.
-- **source_ref**: `memory add` accepts a `source` field (defaults to `session:<id>`); WRITE audit records class + source.
-- **Schema**: new `source_ref` / `memory_class` columns; existing DBs are ALTERed idempotently at open.
+| Capability | Description |
+| --- | --- |
+| Layered memory | Three layers — Memory (store), Retrieved (query candidates), Applied (injected snapshot). Retrieved ≠ adopted; the model decides how to use them in context |
+| Graded approval | Important memories (user preferences / project decisions / lessons learned) require human approval; ordinary facts are saved automatically. Falls back per `approvalFallback` (auto / deny) when no approval channel exists |
+| Automatic consolidation | A "consolidate this turn" directive is injected after each turn ends; a **frozen snapshot** is injected at session start (pinned memories and preferences first, conflicting behavior entries surfaced and marked `[conflict]`) |
+| Memory metabolism | Half-life decay + reference consolidation (use-it-or-lose-it) + conflict exemption + low-weight archiving; automatic backup before runs, checkpoint resume, and dry-run preview |
+| Deep reflection | Topic clustering / trend statistics / conflict alerts / forget candidates — purely local, no LLM; reports written to `longterm/reflections/` |
+| Memory classes | Auto-inferred `memory_class`: user_decision / user_preference / fact / model_suggestion / model_inference (a suggestion ≠ a decision) |
+| Source traceability | `source_ref` records provenance (`session:<id>` by default); structured audit log with a 5-tuple (time / actor / event / entry / detail) |
+| Semantic retrieval | Local embedding model bge-small-zh-v1.5 (512-dim, offline) when available; pure-JS TF-IDF + cosine fallback; exact / semantic / hybrid modes |
+| Fully editable | Every entry can be edited, removed, or restored (database backed up before removal); a single `.db` file holds everything and can be inspected with standard tools |
+| Native-module free | `node:sqlite` built-in + pure JS — no native module conflicts; five-tab "Memory Workbench" admin UI follows the DSH theme including dark mode |
 
-**v0.6.0 (2026-08-31) — architecture refactor + session-end auto-consolidation:**
-
-- **Modular architecture**: `index.mjs` slimmed to a wiring layer; business logic split into focused modules — `shared` (config/utils/audit/conflict), `store` (write/pin/remove/restore/migration), `retrieve` (query/semantic), `meta` (metabolism/reflect), `snapshot` (frozen snapshot/session consolidator), `gate` (approval/self-heal), `notify` (pet bubble), `session-state`. No behavior change; 57 tests green.
-- **Session-end auto-consolidation**: after a turn ends (`turn/end` completed), the plugin injects a "consolidate this turn" directive into the next prompt assembly; the model then writes anything worth remembering via `memory add`. Cleared on write, 5-minute stale guard, deduplication respected.
-- **Fix**: `package.json` `files` whitelist now includes all new modules (publishing without them would break consumers with `ERR_MODULE_NOT_FOUND`); `/reflect` `/dream` endpoints read `dryRun` from the request body.
-
-**v0.5.3 (2026-08-31) — UI modernization:**
-
-- Settings page restyled with the "monumental visual" design language (warm paper-toned surfaces, accent gold line, rounded cards, focus rings) — no more default-blue look; peer deps bumped to `>=0.1.1-rc.1`.
-
-**v0.5.2 (2026-08-20) — editable memories + conflict surfacing:**
-
-- **Edit entries in place**: `memory action=update fp="..." text="..."` (tool), `/memory edit <fp> <new text>` (command) and an **Edit** button on the Knowledge tab — metadata (pin/weight/layer) is preserved, the stale vector is cleared, and an `UPDATE` audit event is recorded; duplicates are rejected.
-- **Conflict surfacing**: behavior memories that clash with user preferences are **pinned to the top** of `memory action=list`, the Knowledge tab (red badge + left border) and the frozen session snapshot (marked `[冲突]`) — so conflicts float up for you to judge and fix, instead of being silently auto-arbitrated away. Search results keep relevance order but still carry the conflict marker.
-- **Conflict arbitration in the Reflect tab**: conflicts are listed at the top of the reflect view, each with inline **Edit** (large auto-growing editor) and **Delete** buttons, plus an **Undo** bar after deletion.
-- **Single-entry rollback**: `memory action=restore fp="..."` (tool), `/memory undo <fp>` (command), `POST /entries/restore` (API) restore a deleted entry from the newest backup DB — metadata preserved, `RESTORE` audit event recorded.
-- **Reflect data source fixed to SQLite** (was scanning the Markdown read-only backups — deleted entries resurrected on the next reflect).
-
-**v0.5.1 (2026-08-20) — pet bridge extracted:**
-
-- The DSH↔desktop-pet bridge (session/event state forwarding + approval panel) moved out to its own plugin `dsh-whale-pet-bridge` — biomemory now only handles memory (save notifications to the pet are kept).
-- No functional changes to memory features.
-
-**v0.5 (2026-08-19) — SQLite + semantic retrieval:**
-
-- **SQLite data layer** (`~/.dsh/biomemory/biomemory.db`, Node 24 built-in `node:sqlite`, WAL mode, zero external deps) — L2/L3 structured entries + vector blobs + audit log
-- **Offline embedding model** (`bge-small-zh-v1.5`, 512-dim, quantized ONNX ~24MB at `~/.dsh/models/`) via transformers.js — pure JS, no native modules
-- **Three retrieval modes**: `exact` (keyword) / `semantic` (vector) / `hybrid` (default, Reciprocal Rank Fusion per v0.5 design doc §3.4)
-- **Automatic Markdown migration**: existing `~/.dsh/memory` entries imported once on first boot (Markdown kept as read-only backup)
-- **Audit aggregation** (P1-003): group by action / day / entry
-- **Dream checkpointing** (P0-002): resume interrupted metabolism from the last checkpoint
-- Graceful degradation: model unavailable → keyword retrieval only; memory features unaffected
-
-Core features (unchanged from v0.4):
-
-- `memory` tool: add / query / update / remove / list / pin / unpin / dream / audit
-- **Frozen snapshot injection** at session start (pinned memories and user preferences at top priority, then recent knowledge/behavior)
-- **Graded approval gate**: important memories (preferences/decisions/lessons) require human approval; ordinary facts are auto-saved; fails closed when no approval channel is available
-- `/memory` command: list / query / add / edit / remove / pin / unpin / dream / audit
-- `memory_recall` tool: cross-session recall ("do you remember…" scenarios)
-- Deduplication: content fingerprint skips duplicate entries
-- **Memory metabolism** (`/memory dream`): half-life decay, reference consolidation, conflict arbitration, cold archiving (status flag, never deleted)
-- **Memory pins**: lock a memory so it never decays and always enters the snapshot
-
-## Install
+## 📦 Installation
 
 ```bash
-# As a local bundle in a DSH profile
+# Install into a DSH profile
 dsh plugin add dsh-biomemory
-# Or pnpm local link
+
+# Or link a local checkout during development
 pnpm add link:./dsh-biomemory
 ```
 
-Add `dsh-biomemory` to `dsh.profile.bundles` in the profile.
+Then register `dsh-biomemory` in `dsh.profile.bundles` of your profile and restart DSH.
 
-## Memory Layout
+**Post-install verification**:
 
-```
-~/.dsh/memory/
-├── preferences.md      # User/project preferences (top priority, frozen-injected)
-├── hot/
-│   ├── knowledge.md    # L1 recent knowledge (facts/decisions)
-│   └── behavior.md     # L1 recent behavior (lessons/habits/workflows)
-├── projects/<name>/    # L2 project archives
-├── longterm/           # L3 long-term memory
-├── archive/            # Memories archived by metabolism (decayed below threshold, never deleted)
-├── backups/            # Automatic backups before dream runs (rollback source)
-├── audit.log           # Human-readable audit (legacy, kept for compatibility)
-└── audit.jsonl         # Structured audit (JSON Lines, v0.3)
-```
+```bash
+# 1. Tool registered — call it from a session (visible to the model)
+memory action=query text="test"
 
-Each entry is a single line: `- [knowledge|auto] [fp:xxx] [w:10] [h:3] [t:2026-08-16 13:00] [pin] text`
+# 2. Data layer ready — should appear after the first start
+ls ~/.dsh/biomemory/
+# biomemory.db  biomemory.db-wal  biomemory.db-shm
 
-- `w` = weight (default 10) — decay/consolidation base
-- `h` = reference count — consolidation input
-- `t` = write time — decay age source
-- `pin` = locked (excluded from decay, always injected)
+# 3. Legacy Markdown memories migrated automatically (kept as read-only backup)
+#    Check migration status via the Web API:
+#    GET /biomemory/api/status → migration field
 
-## Memory Metabolism (Dream)
-
-`/memory dream` (or `memory action=dream`) manually triggers memory metabolism — the housekeeping a sleeping brain does:
-
-1. **Half-life decay** (default 7 days): weight halves every half-life (`w × 0.5^(age/halfLife)`), floored at 1.
-2. **Reference consolidation**: entries referenced ≥ `consolidateThreshold` (default 3) times gain +1 weight, capped at `weightCap` (default 20).
-3. **Conflict surfacing (v0.5.2)**: when behavior memory conflicts with preferences it is no longer silently halved — it is exempted from decay/archival, stays active, and floats to the top of listings and the session snapshot so **you** can judge and edit it. A `CONFLICT` audit event is recorded; once you edit it into agreement, normal metabolism resumes.
-4. **Archiving**: entries whose weight drops below `decayThreshold` (default 3) move to `archive/` — moved, never deleted.
-
-Usage:
-
-```
-/memory dream            # run metabolism
-/memory dream --dry-run  # preview only, no changes
-memory action=dream dryRun=true   # same via the memory tool
+# 4. Admin UI — the "Memory Workbench" appears in DSH settings with five tabs:
+#    Overview / Knowledge / Metabolism / Reflect / Settings
 ```
 
-Dry-run example output:
+## 🚀 Quick Start
 
-```
-【预览】扫描 120 条：衰减 12 · 巩固 3 · 冲突 0 · 归档 4
-备份：（dry-run 不执行备份）
-```
+```text
+# ① Save a user preference (important memory → human approval; stored once approved)
+memory action=add track=user text="User prefers domestic mirrors for downloads" source="user statement"
 
-**Backup & rollback**: before an actual run, the whole memory store is automatically copied to `backups/<timestamp>/` (including `audit.jsonl`). On startup, the self-check restores the latest backup automatically if a primary memory file is found corrupted. Rollbacks are recorded as `ROLLBACK` audit events.
+# ② Query (hybrid = exact + semantic fusion, the default)
+memory action=query text="mirror" mode=hybrid topK=5
 
-## Auto recall / auto save (v0.4.0)
+# ③ Correct an entry (text only; metadata preserved)
+memory action=update fp="a1b2c3" text="User prefers domestic mirrors (Tsinghua pip / npmmirror)"
 
-Three automatic layers on top of explicit calls:
+# ④ Pin an important entry (exempt from decay, always in the session snapshot)
+memory action=pin fp="a1b2c3"
 
-1. **Approval fallback**: important memories normally require approval; when approval is unavailable (policy `never` / service missing), they are saved automatically per `approvalFallback` (default `auto`), audited as `[降级]`. Switch to `deny` in settings to stay fail-closed.
-2. **Auto consolidation (use-it-or-lose-it)**: every keyword query/recall hit bumps `hits+1` and writes back — memories that get recalled often decay slower (audit `RECALL`).
-3. **Auto dream/reflect**: `autoDreamDays` (default 7) and `autoReflectDays` (default 3) run metabolism/reflection at startup when older than the interval; `0` disables. Audit `AUTO-DREAM` / `AUTO-REFLECT`.
+# ⑤ Run metabolism + reflection (use --dry-run to preview first)
+memory action=dream dryRun=true
+memory action=reflect dryRun=true
 
-## Deep reflection (Reflect, v0.4.0)
+# ⑥ Audit (what has the memory system been doing lately?)
+memory action=audit sinceDays=7
+memory action=audit aggregate=true groupBy=action
 
-`/memory reflect` (or `memory action=reflect`, settings tab) — a purely local, LLM-free periodic summary:
-
-1. **Topic clustering**: all entries clustered by TF cosine similarity (≥0.25) to surface recurring topics;
-2. **Trend stats**: writes in the last 7 days vs the previous week (rising / steady);
-3. **Conflict alerts**: behavior memories that clash with preferences;
-4. **Forget candidates**: low-weight entries worth reviewing.
-
-Reports are written to `longterm/reflections/<timestamp>.md`; `--dry-run` previews without writing.
-
-## Knowledge page (v0.4.0)
-
-The settings page gains a **Knowledge** tab: full-text/semantic search, layer filter, per-entry weight/hits/time/pin display, one-click pin/unpin, **edit** (inline textarea) and **safe removal** (backed up first, restorable). Conflicting behavior entries float to the top with a red badge. Web API: `GET /biomemory/api/entries`, `POST /biomemory/api/entries/pin|unpin|update|remove`, `POST /biomemory/api/reflect`.
-
-## Memory Pins
-
-Lock a memory so it never participates in decay and always enters the snapshot:
-
-```
-/memory pin <fp>      # lock
-/memory unpin <fp>    # unlock
-memory action=pin fp="xxx"
-memory action=unpin fp="xxx"
+# ⑦ The /memory command family is also available at runtime
+/memory list
+/memory query preference
 ```
 
-Snapshot injection priority: **pinned > preferences > knowledge > behavior**.
+## 🧠 Usage Guide
 
-## Audit
+### memory tool (action reference)
 
-Two audit channels:
+| Action | Parameters | Description |
+| --- | --- | --- |
+| `add` | `text` (required), `track`=user\|agent, `source` | Save a memory; important entries request approval, falling back per `approvalFallback` |
+| `query` | `text`, `mode`=hybrid\|exact\|semantic, `topK`, `minWeight`, `projectId`, `fragmentTypes`, `includeArchived` | Retrieve; hits are consolidated (use-it-or-lose-it) |
+| `update` | `fp`, `text` | Edit an entry (metadata such as pin/weight preserved; stale vector cleared; `UPDATE` audited) |
+| `remove` | `fp` | Delete an entry (database backed up first; restorable) |
+| `restore` | `fp` | Restore a deleted entry from the newest backup |
+| `list` | `topK` | List all entries; behavior memories conflicting with preferences are surfaced at the top |
+| `pin` / `unpin` | `fp` | Lock / unlock. Pin = no-forgetting only (exempt from decay/archive); it does not imply mandatory application every turn |
+| `dream` | `dryRun`, `resume` (default true) | Metabolism: decay / consolidation / conflict / archiving; checkpoint-resumable |
+| `reflect` | `dryRun` | Deep reflection: topic clustering / trends / conflict alerts / forget candidates |
+| `audit` | `type`, `sinceDays`, `aggregate`, `groupBy` (action\|day\|entry) | Structured audit queries and aggregation |
 
-- `audit.log` — human-readable one-line summaries, backward compatible
-- `audit.jsonl` — structured, one JSON object per line
+Examples:
 
-Events: `WRITE`, `DECAY`, `CONSOLIDATE`, `CONFLICT`, `ARCHIVE`, `PIN`, `UNPIN`, `PREVIEW` (dry-run), `ROLLBACK`.
-
-Example line:
-
-```json
-{"t":"2026-08-16T05:00:00.000Z","event":"DECAY","fp":"abc123","text":"..."}
-```
-
-Query:
-
-```
-/memory audit                    # recent events
-/memory audit --since 7d         # last 7 days
-/memory audit --type DECAY       # only DECAY events
+```text
+memory action=add track=user text="The official name is 'DaFeiYu'; do not use old names" source="user statement"
+memory action=query text="UI rendering width rules" mode=hybrid topK=10 minWeight=0.1 fragmentTypes=decision,preference
 memory action=audit type="DECAY" sinceDays=7
+memory action=audit aggregate=true groupBy=day
 ```
 
-## Semantic Retrieval
+**Memory classes (auto-inferred at write time)**: `user_decision` (explicit user decision) · `user_preference` (user preference) · `fact` (ordinary fact) · `model_suggestion` (model suggestion) · `model_inference` (model inference). A suggestion ≠ a decision — model suggestions must never impersonate decisions the user made.
 
-Keyword matching runs first; when hits are insufficient, results are supplemented with a pure-JS TF-IDF + cosine implementation — **no native modules, no external dependencies**, fully offline. Semantic hits are marked as "semantic" in query output.
+### memory_recall tool
 
-## Configuration
+Cross-session recall for "do you remember…" scenarios; same backend as `memory query`, semantically specialized for recollection:
 
-```js
-// Plugin config (bundle or profile layer)
-{
-  halfLifeDays: 7,          // half-life in days for decay
-  decayThreshold: 3,        // weight below this → archived
-  consolidateThreshold: 3,  // references ≥ this → consolidate (+1 weight)
-  weightCap: 20,            // consolidation weight cap (prevents runaway growth)
-  hotTokenLimit: 5000,      // snapshot hot-section token budget
-  maxQueryResults: 20,      // query result cap
-  petEndpoint: null         // optional: local notification service URL (off by default)
-}
+```text
+memory_recall text="the versioning rules we settled on"
 ```
 
-## Compatibility
+### The /memory command family
 
-- Node >= 22.19.0
-- `@deepseek-ai/dsh-*` >= 0.1.1-rc.2 runtime (implemented against actual lib sources)
+| Command | Description |
+| --- | --- |
+| `/memory list` | List all entries (conflicts surfaced at the top) |
+| `/memory query <term>` | Keyword + semantic search |
+| `/memory add <content>` | Write directly (human-initiated, no approval) |
+| `/memory edit <fp> <new text>` | Edit an entry |
+| `/memory remove <fp>` | Delete an entry (restorable) |
+| `/memory undo <fp>` | Restore a deleted entry |
+| `/memory pin <fp>` / `unpin <fp>` | Pin / unpin |
+| `/memory entries [term]` | List entries (optional filter term) |
+| `/memory dream [--dry-run]` | Run metabolism |
+| `/memory reflect [--dry-run]` | Run deep reflection |
+| `/memory audit [--since 7d] [--type DECAY]` | Audit query |
 
-## Troubleshooting (FAQ)
+### Frozen snapshot injection
 
-- **Node version**: requires Node >= 22.19.0; older versions may fail to load the plugin.
-- **DSH runtime compatibility**: targets `@deepseek-ai/dsh-*` >= 0.1.1-rc.2 (current latest line; tested on 0.1.2-rc.1 too) — check the version of the runtime you actually run.
-- **Memory directory issues**: if writes fail, check read/write permissions on the memory root; if `DSH_MEMORY_ROOT` is set, it must point to an existing, writable directory.
-- **Native module conflicts**: this plugin has **no native dependencies** — it is pure JS, so it cannot clash with native modules of other plugins.
+At session start the plugin freezes high-value memories into the system prompt (registered and frozen at startup, marked "session frozen"):
 
-## Usage Scenarios
+- The header states the three-layer model explicitly: **this snapshot = Applied Context** (already injected); Memory (store) and Retrieved (query candidates) are not included; **retrieved ≠ adopted**.
+- Injection order: **pinned memories (top priority, exempt from decay) → user preferences (top priority) → recent knowledge → recent behavior**.
+- Behavior memories conflicting with preferences are **surfaced at the top with a `[conflict]` marker** for you to resolve.
+- A hot-section token budget `hotTokenLimit` (default 5000) applies; preferences and pinned entries are retained first when truncated.
 
-- **Personal knowledge base, long-term maintenance**: accumulate facts and decisions over time, query them later like a second brain; decay and archiving keep the store tidy without manual pruning.
-- **Project experience accumulation**: lessons, habits and decisions live per-project in `projects/<name>/`, consolidating (weight grows) as topics are referenced repeatedly.
-- **Cross-session preference memory**: preferences are injected at every session start, pin important ones for stability, and let conflict arbitration keep preferences authoritative over behavior.
+### Graded approval gate
 
-## Contributing
+| Memory type | Approval mode |
+| --- | --- |
+| User preferences / project decisions / lessons (`track=user` or important keywords) | **Human approval** (ask) |
+| Ordinary facts | Automatic (auto) |
+| No approval channel (policy `never` / service missing) | Per `approvalFallback`: `auto` = save with a degraded-audit marker · `deny` = reject (fail-closed) |
 
-- **Report issues**: open an issue with the DSH runtime version, Node version, and reproduction steps.
-- **Pull requests**: fork the repository, make the change, add/update tests, and run `npm test` before submitting.
-- **Tests**: run `npm test` (node:test). New behavior should ship with test coverage.
+### Memory metabolism (Dream)
 
-## License
+Runs when your sleeping brain does its housekeeping — `/memory dream` or `memory action=dream`:
 
-MIT
+1. **Half-life decay** (default 7 days): `w × 0.5^(age/halfLife)`, floored at 1.
+2. **Reference consolidation**: entries referenced ≥ `consolidateThreshold` (default 3) times gain +1 weight, capped at `weightCap` (default 20).
+3. **Conflict exemption**: behavior memories conflicting with preferences are neither decayed nor archived — they stay active and float to the top of listings and the snapshot for **your** judgment; editing the conflict away restores normal metabolism. A `CONFLICT` event is recorded.
+4. **Archiving**: entries below `decayThreshold` (default 3) get `status=archived` — moved, never deleted.
+
+The database is backed up automatically before a run (last 7 kept, `ROLLBACK` auditable); checkpoints are written every 100 entries so an interrupted run resumes with `resume=true`; `--dry-run` previews without writing.
+
+### Deep reflection (Reflect)
+
+Purely local, LLM-free periodic review: **topic clustering** (TF cosine similarity ≥ 0.25) · **trend stats** (last 7 days vs the previous week) · **conflict alerts** (potential behavior-vs-preference clashes) · **forget candidates** (low-weight entries). Reports go to `longterm/reflections/<timestamp>.md`; `--dry-run` previews without writing.
+
+### Knowledge base (admin UI)
+
+The "Memory Workbench" in DSH settings has five tabs:
+
+| Tab | Function |
+| --- | --- |
+| Overview | Store statistics (entries / pinned / layers / vectors / 7-day audit), model status, migration status, conflict and low-weight summaries |
+| Knowledge | Full-text / semantic search (exact / semantic / hybrid), layer filter, weight / hits / time / pin status; one-click pin/unpin, **inline editing**, **safe removal** (backed up first, restorable); conflict entries surfaced with a red badge |
+| Metabolism | One-click run / preview of metabolism with decay / consolidation / conflict / archive results |
+| Reflect | One-click run / preview of reflection; report listing with inline conflict resolution (edit or delete) |
+| Settings | Visual editing of every configuration option (including reset to defaults) |
+
+### Audit
+
+Two channels: the **SQLite `audit_log` table** (structured, 5-tuple `t / actor / action / entry_id / detail`, primary) + **`audit.log`** (human-readable one-line summaries, backward compatible).
+
+Event types: `WRITE` / `DECAY` / `CONSOLIDATE` / `CONFLICT` / `ARCHIVE` / `RECALL` / `ROLLBACK` / `AUTO-DREAM` / `AUTO-REFLECT` (auxiliary: `PIN` / `UNPIN` / `UPDATE` / `REMOVE` / `RESTORE` / `MIGRATE` / `VECTORIZE` / `PREVIEW` / `REFLECT` / `CONFIG`).
+
+```text
+/memory audit                      # recent events
+/memory audit --since 7d           # last 7 days
+/memory audit --type DECAY         # DECAY only
+memory action=audit type="DECAY" sinceDays=7
+memory action=audit aggregate=true groupBy=action   # aggregated stats
+```
+
+### Semantic retrieval
+
+Keyword matching runs first; when hits are insufficient, a pure-JS **TF-IDF + cosine** implementation supplements recall (no native modules, fully offline). When the local embedding model (bge-small-zh-v1.5, 512-dim, at `~/.dsh/models/`) is available, retrieval upgrades to **hybrid** fusion (RRF variant); if the model is missing or fails to load, retrieval degrades to keyword search and memory features remain unaffected. Semantic hits are marked "semantic" in output.
+
+## ⚙️ Configuration
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `halfLifeDays` | `7` | Half-life (days): weight halves every half-life |
+| `decayThreshold` | `3` | Weight below this → archived (moved, never deleted) |
+| `consolidateThreshold` | `3` | References ≥ this → consolidate (+1 weight) |
+| `weightCap` | `20` | Consolidation weight cap (prevents runaway growth) |
+| `hotTokenLimit` | `5000` | Snapshot hot-section token budget |
+| `maxQueryResults` | `20` | Query result cap |
+| `approvalFallback` | `auto` | When approval is unavailable: `auto` = save with degraded-audit marker / `deny` = reject |
+| `autoDreamDays` | `7` | Auto-run metabolism at startup if older than this many days (`0`=off) |
+| `autoReflectDays` | `3` | Auto-run reflection at startup if older than this many days (`0`=off) |
+| `conflictOverlap` | `3` | Conflict detection: proprietary bigram overlap threshold between behavior and a single preference |
+| `petEndpoint` | `null` | Optional: local desktop-pet notification service URL (off by default) |
+
+Editable in the Settings tab, or via `POST /biomemory/api/config`; persisted as `biomemory.config.json` (fully transparent).
+
+## 🔌 Integration
+
+### Web API (registered on DshWebServer, prefix `/biomemory/api`)
+
+| Method / Path | Description |
+| --- | --- |
+| `GET /status` | Store statistics + config + model/migration status |
+| `GET /config` · `POST /config` | Read / update configuration (whitelisted fields; `reset:true` restores defaults) |
+| `POST /dream` | Run metabolism (body `{ "dryRun": true }`) |
+| `POST /reflect` | Run deep reflection (body `{ "dryRun": true }`) |
+| `GET /entries` | List entries (`q` query / `layer` layer / `mode` retrieval mode / `limit` cap) |
+| `POST /entries/pin` · `/unpin` · `/remove` · `/restore` · `/update` | Entry management (body carries `fp` etc.) |
+| `POST /vectors` · `GET /vectors` | Trigger vectorization / query vectorization status |
+| `GET /audit` · `GET /audit/aggregate` | Audit query (`sinceDays`/`type`) / aggregation (`groupBy`) |
+
+### Notifications (optional)
+
+After configuring `petEndpoint`, memory-save events are pushed to a local desktop-pet bubble over HTTP POST (silent failure when the pet is offline; memory itself is unaffected).
+
+### Environment variables
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `DSH_BIOMEMORY_DIR` | `~/.dsh/biomemory` | SQLite data directory |
+| `DSH_MEMORY_ROOT` | `~/.dsh/memory` | Legacy Markdown root (migration source & read-only backup) |
+| `DSH_MODELS_ROOT` | `~/.dsh/models` | Local embedding model directory |
+| `DSH_MEMORY_DEBUG` | — | Writes debug logs when set to `1` |
+
+## 🛡 Compatibility
+
+- **Node ≥ 22.19.0** (requires built-in `node:sqlite`).
+- **Runtime**: `@deepseek-ai/dsh-*` ≥ 0.1.1-rc.2 (current latest line; verified on 0.1.2-rc.1, implemented against actual lib sources).
+- **peerDependencies**: `@deepseek-ai/cordis ^4.0.2`, `@deepseek-ai/dsh-session >= 0.1.1-rc.2`, `@deepseek-ai/dsh-tools >= 0.1.1-rc.2`.
+- **Zero native npm dependencies**: the data layer is built-in `node:sqlite` plus pure JS, so it cannot clash with other plugins' native modules; the embedding model is an optional offline component that degrades gracefully when missing.
+- Since v0.6.3, memory tool return values are compatible with dsh-tools' new strict lossless JSON validation (undefined/NaN fields are normalized to null, fixing tool validation errors).
+
+## 📜 Version History
+
+### v0.6.3 (2026-09-05) · Compatibility · Theme
+
+- Adapted to DSH 0.1.2-rc.1: memory tool return values compatible with the new dsh-tools lossless JSON validation (undefined/NaN fields normalized to null, fixing tool errors).
+- Plugin UI dark-mode adaptation: follows DSH theme `--dsw-alias-*` variables with dual-channel detection on `body[data-ds-dark-theme]` and a MutationObserver for live switching.
+
+### v0.6.2 (2026-09-05) · UI rebuild
+
+- Admin UI rebuilt on the "skeleton/flesh/breath" design language: modern minimalism — neutralSurface `#F5F6F8` base with white rounded cards (max-width 880 centered), primary-underline tabs, 4/8px grid, 150ms restrained motion, type scale 12/14/16/20/28.
+- Colors taken entirely from dsh-fuse design tokens (primary `#2563EB` / accent `#0EA5E9` / border `#E5E7EB` / text `#1A1A1A`), zero hardcoded values; purple-pink brand color established (memory neurons).
+
+### v0.6.1 (2026-09-05) · Cognitive hygiene · Traceability
+
+- Memory / Retrieved / Applied three-layer separation (retrieved ≠ adopted).
+- Pin semantics corrected: pin = no-forgetting + relevance admission (latest explicit user decision wins on conflict).
+- Memory classes `memory_class` (user_decision / user_preference / fact / model_suggestion / model_inference; suggestion ≠ decision) + `source_ref`.
+- Schema evolution: new columns in `entries`, idempotent automatic ALTER for existing databases.
+
+### v0.6.0 (2026-08-31) · Architecture refactor · Auto-consolidation
+
+- `index.mjs` split into shared / store / retrieve / meta / snapshot / gate / notify / session-state modules (no behavior change; 57 tests green).
+- Session-end auto-consolidation: a "consolidate this turn" directive is injected after `turn/end`; the model writes via `memory add`; marker cleared on write, 5-minute stale guard, strict deduplication.
+- Fixes: `files` whitelist now covers all new modules (prevents `ERR_MODULE_NOT_FOUND` after publishing); `/reflect` `/dream` endpoints read `dryRun` from the request body.
+
+### v0.5.3 (2026-08-31) · UI modernization
+
+- Settings page moved to dsh-fuse design tokens (modern minimalism: neutralSurface base + white cards, primary `#2563EB`, 4/8px grid); peerDeps bumped to `>=0.1.1-rc.1`.
+
+### v0.5.2 (2026-08-20) · Editing · Conflict surfacing · Rollback
+
+- Editable memories (`update` preserves pin/weight, audits `UPDATE`, rejects duplicates) + conflict surfacing (behavior-vs-preference conflicts surfaced at the top for judgment instead of silent weight reduction).
+- Single-entry rollback (`restore` / `/memory undo`; restores from the newest backup, vector cleared for recomputation, `RESTORE` audited).
+
+### v0.5.0 (2026-08-20) · Data-layer overhaul
+
+- SQLite data layer (`~/.dsh/biomemory/biomemory.db`, built-in node:sqlite, WAL, zero external deps) + local embedding semantic retrieval (bge-small-zh-v1.5, 512-dim, offline).
+- Automatic migration of legacy Markdown memories (kept as read-only backup) + audit aggregation (by action/day/entry) + checkpoint-resumable dream.
+
+### v0.4.0 · Automation · Reflection · Knowledge page
+
+- Automatic recall (hit consolidation, use-it-or-lose-it) / automatic saving (approval fallback + auto metabolism/reflection cycles) + deep reflection + knowledge page (settings tab).
+
+### v0.3.x · Foundation
+
+- Memory metabolism (dream) + memory pins + structured audit (audit.jsonl) + semantic retrieval (TF-IDF) + settings panel.
+
+## ❓ FAQ
+
+- **Node version**: Node ≥ 22.19.0 is required (built-in `node:sqlite`); older versions may fail to load the plugin.
+- **DSH runtime compatibility**: targets `@deepseek-ai/dsh-*` ≥ 0.1.1-rc.2 — verify the runtime version you actually run (0.1.2-rc.1 verified).
+- **Tool errors (Invalid object / lossless JSON)**: upgrade to v0.6.3+ — return values are now compatible with the new strict validation.
+- **Semantic retrieval unavailable**: check that the model exists at `~/.dsh/models/bge-small-zh-v1.5`; when missing, retrieval degrades to keyword + TF-IDF and memory features keep working.
+- **Write failures**: check read/write permissions for `~/.dsh/biomemory/` (and `DSH_BIOMEMORY_DIR`); if approval is rejected, check the approval policy and `approvalFallback`.
+- **Where did my legacy Markdown memories go?**: they were migrated into SQLite automatically on first start; `~/.dsh/memory/` remains as a read-only backup and is not deleted.
+- **Can a deleted entry be recovered?**: the database is backed up before each removal (last 7 kept) — run `/memory undo <fp>` or `memory action=restore fp=...`.
+- **Native module conflicts**: this plugin has none — it is implemented in pure JS and cannot conflict with other plugins.
+
+## 🧪 Development
+
+```bash
+# Run the test suite (node:test, 60 tests, all green)
+npm test
+```
+
+Module layout: `index.mjs` (wiring layer) + `shared` (config/audit/conflict) · `store` (write/pin/remove/restore/migration) · `retrieve` (query/semantic) · `meta` (metabolism/reflection) · `snapshot` (snapshot/session consolidation) · `gate` (approval/self-heal) · `notify` (desktop-pet notifications) · `session-state` · `db` (SQLite data layer) · `embed` (embedding model).
+
+**Contributing**: fork → change → add/update tests → run `npm test` before submitting. Please include the DSH runtime version, Node version, and reproduction steps when reporting issues.
+
+## 📄 License
+
+MIT — see [LICENSE](LICENSE) for the full text.
+
+> Copyright © 2026 dsh-biomemory contributors
+>
+> Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the conditions in the LICENSE file.
