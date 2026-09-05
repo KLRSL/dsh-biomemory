@@ -2,215 +2,324 @@
 
 > [中文文档](README.zh-CN.md) · [English](README.md)
 
-> **版本 v0.6.3** · MIT License · **兼容性**：DeepSeek Harness ≥ 0.1.1-rc.2（当前 latest 线实测通过；0.1.2-rc.1 亦已测试）
+> **版本 v0.6.3** · MIT License · **兼容性**：DeepSeek Harness ≥ 0.1.1-rc.2（0.1.2-rc.1 已实测）· Node ≥ 22.19.0
 
-给 DeepSeek Harness (DSH) 的跨会话记忆插件：像人脑一样分层记、分级审、会代谢、透明可改。
+给 [DeepSeek Harness](https://github.com/deepseek-ai/dsh) (DSH) 的跨会话记忆插件：像人脑一样**分层记、分级审、会代谢、透明可改**。数据层为 SQLite（`node:sqlite` 内置、WAL 模式、零外部依赖），旧 Markdown 记忆首次启动自动迁移并保留只读备份。
 
-## v0.6.2（2026-09-05）· 管理 UI 设计语言重构
+## ✨ 功能特性
 
-- 设置页/知识页五个 tab（概览/知识库/代谢/反思/设置）整体按「规则是骨架，语义是血肉，情绪是呼吸」设计语言重构：从「巨构视觉」切换到现代极简——neutralSurface #F5F6F8 底 + 白色圆角 16 卡片分层（max-width 880 居中）、主色下划线 tabs、4/8px 栅格留白、150ms 克制动效、字号阶梯 12/14/16/20/28。
-- 配色严格取自 dsh-fuse 设计令牌 default 主题（--bm-* CSS 变量：primary #2563EB / accent #0EA5E9 / border #E5E7EB / text #1A1A1A 等），除 13 个令牌定义外零硬编码色值，透明度一律 color-mix()。
-- 语义色保留：冲突=红色低饱和 tint + 左侧 inset 竖条、锁定=主色、正常=中性；图表 fill 按类别着色（preference/≥10=主色、fact=强调色、note=弱化色）。
-- 类名与挂载接口零变更（.bm-* / 五 tab / BiomemorySettingsPage），全部测试原样通过（60/60 + 设置页脚本 ✅）。
+| 能力 | 说明 |
+| --- | --- |
+| 分层记忆 | Memory / Retrieved / Applied 三层分离——存储层、查询候选、已注入快照，检索到 ≠ 已采用，执行与否由 AI 结合上下文判断 |
+| 分级审批 | 重要记忆（用户偏好/项目决策/踩坑教训）人工审批，普通事实自动写入；审批通道不可用时按 `approvalFallback` 降级（auto/deny） |
+| 自动沉淀 | 会话结束自动注入「沉淀本轮」指令；启动自动注入**冻结记忆快照**（锁定与偏好最高优先级，冲突行为记忆置顶 `[冲突]` 标注） |
+| 记忆代谢 | 半衰期衰减 + 引用巩固（用进废退）+ 冲突豁免 + 低权重归档；执行前自动备份、支持断点续跑与 dry-run 预览 |
+| 深度反思 | 主题聚类 / 趋势统计 / 冲突提醒 / 遗忘建议，纯本地无 LLM，报告写入 `longterm/reflections/` |
+| 记忆类别 | `memory_class` 自动推断：user_decision / user_preference / fact / model_suggestion / model_inference（建议 ≠ 决定） |
+| 来源可溯 | `source_ref` 记录来源，`add` 缺省记 `session:<id>`；结构化审计五元组（时间/操作者/事件/条目/详情）全程可查 |
+| 语义检索 | 本地嵌入模型 bge-small-zh-v1.5（512 维，离线）优先；TF-IDF + cosine 纯 JS 降级；exact / semantic / hybrid 三模式 |
+| 透明可改 | 每条记忆可编辑/删除/回滚（删除前自动备份）；SQLite 单文件即所有数据，`.db` 直接用标准工具查看 |
+| 零原生依赖 | `node:sqlite` 内置 + 纯 JS 实现，无原生模块冲突；管理 UI 五 tab「记忆工作台」，深色模式跟随 DSH 主题 |
 
-## v0.6.1（2026-09-05）· 认知卫生与来源可溯源（评审建议落地）
-
-- **Memory ≠ Retrieved ≠ Applied 三层分离**：memory 工具描述与冻结快照头部明确三层概念——快照=Applied Context（已注入 prompt），Memory=存储层，Retrieved=查询候选；检索到 ≠ 已采用，执行与否由模型结合上下文判断。
-- **记忆钉语义修正（relevance admission）**：锁定 = 不遗忘（防衰减/归档），不再暗示"每轮必须执行"；快照锁定区带采纳门说明，与用户最新明确决定冲突时以最新决定为准。
-- **记忆类别 memory_class**：写入时自动推断 user_decision（用户明确决定）/ user_preference（用户偏好）/ fact（普通事实）/ model_suggestion（模型建议）/ model_inference（模型推测）——**建议 ≠ 决定**，模型建议绝不冒充用户拍板；查询/快照/列表均带类别标注。
-- **来源 source_ref**：memory add 支持 `source` 参数记录来源说明（缺省记 `session:<id>`），审计 WRITE 事件记录类别与来源，可溯源。
-- **schema 演进**：entries 表新增 `source_ref` / `memory_class` 列，旧库启动自动 ALTER 补列（幂等），向量/备份/回滚语义不变。
-
-## v0.6.0（2026-08-31）· 架构重构 + 会话结束自动沉淀
-
-- **模块化架构**：`index.mjs` 精简为接线层，业务拆分至专门模块——`shared`（配置/工具/审计/冲突）、`store`（写入/钉/删/回滚/迁移）、`retrieve`（查询/语义）、`meta`（代谢/反思）、`snapshot`（冻结快照/会话沉淀）、`gate`（审批/自检）、`notify`（桌宠气泡）、`session-state`（会话沉淀状态）。行为不变，57 测试全绿。
-- **会话结束自动沉淀**：一轮对话结束（`turn/end` completed）后，插件在下次提示词组装时注入"沉淀本轮"指令，模型据此把值得长期记住的内容用 `memory add` 写入；写即清标记、5 分钟防呆、严格去重。
-- **修复**：`package.json` `files` 白名单补全全部新模块（否则发布后别人更新会 `ERR_MODULE_NOT_FOUND`）；`/reflect` `/dream` 端点改为读取请求体 `dryRun`。
-
-## v0.5.3（2026-08-31）· UI 现代化
-
-- 设置页改用「现代极简」设计语言（dsh-fuse default 令牌：neutralSurface 底 + 白色卡片、主色 #2563EB、圆角 8/12/16、4/8px 栅格、轻阴影），不再使用暖纸底/金线视觉；peerDeps 升至 `>=0.1.1-rc.1`。
-
-- SQLite 数据层（`~/.dsh/biomemory/biomemory.db`，node:sqlite 内置、WAL 模式、零外部依赖），旧 Markdown 记忆首次启动自动迁移（保留只读备份）
-- `memory` 工具：add / query / update / remove / list / pin / unpin / dream / audit
-- 会话启动自动注入**冻结记忆快照**（锁定记忆与用户偏好最高优先级，其次近期知识/行为；与偏好冲突的行为记忆置顶并标注 `[冲突]`）
-- **分级审批门**：重要记忆（偏好/决策/教训）走人工审批，普通事实自动写入；无审批通道时 fail closed
-- 审计：人类可读 `audit.log`（旧版，兼容保留）+ 结构化 `audit.jsonl`（JSON Lines）——每次事件可追溯
-- `/memory` 命令：list / query / add / edit / remove / pin / unpin / dream / audit
-- `memory_recall` 工具：跨会话召回（"你还记得…吗"场景）
-- 去重：内容指纹跳过重复记忆
-- **记忆代谢**（`/memory dream`）：半衰期衰减 + 引用巩固 + 冲突仲裁 + 低权重归档——执行前自动备份、损坏自动回滚
-- **记忆钉**：锁定记忆不参与衰减、无条件注入快照
-- **语义检索**：本地嵌入模型（bge-small-zh-v1.5，512 维，离线）+ exact/semantic/hybrid 三模式（v0.5）
-
-## 安装
+## 📦 安装
 
 ```bash
-# 在 DSH profile 中作为本地 bundle 使用
+# 在 DSH profile 中安装插件
 dsh plugin add dsh-biomemory
-# 或 pnpm 本地 link
+
+# 或本地开发：用 pnpm 链接到本地目录
 pnpm add link:./dsh-biomemory
 ```
 
-在 profile 的 `dsh.profile.bundles` 中加入 `dsh-biomemory`。
+然后在 profile 的 `dsh.profile.bundles` 中登记 `dsh-biomemory`，重启 DSH 生效。
 
-## 记忆结构
+**安装后验证**：
 
-```
-~/.dsh/memory/
-├── preferences.md      # 用户/项目偏好（最高优先级，冻结注入）
-├── hot/
-│   ├── knowledge.md    # L1 近期知识（事实/决策）
-│   └── behavior.md     # L1 近期行为（教训/习惯/工作流）
-├── projects/<项目>/    # L2 项目档案
-├── longterm/           # L3 长期记忆体
-├── archive/            # 代谢归档的记忆（权重衰减至阈值以下，不删除）
-├── backups/            # dream 执行前自动备份（回滚来源）
-├── audit.log           # 人类可读审计（旧版，兼容保留）
-└── audit.jsonl         # 结构化审计（JSON Lines，v0.3）
-```
+```bash
+# 1. 工具已注册 —— 在会话中直接调用（对话内模型可见）
+memory action=query text="测试"
 
-每条记忆一行：`- [知识|自动] [fp:xxx] [w:10] [h:3] [t:2026-08-16 13:00] [pin] 文本`
+# 2. 数据层就绪 —— 首次启动后应出现
+ls ~/.dsh/biomemory/
+# biomemory.db  biomemory.db-wal  biomemory.db-shm
 
-- `w` = 权重（默认 10）——衰减/巩固的基础
-- `h` = 引用计数——巩固的输入
-- `t` = 写入时间——衰减年龄来源
-- `pin` = 锁定（不参与衰减、无条件注入）
+# 3. 旧 Markdown 记忆自动迁移（保留只读备份，不删除）
+#    迁移状态可通过 Web API 查看：
+#    GET /biomemory/api/status → migration 字段
 
-## 记忆代谢（Dream）
-
-`/memory dream`（或 `memory action=dream`）手动触发记忆代谢——相当于睡眠时大脑做的事：
-
-1. **半衰期衰减**（默认 7 天）：权重每过半衰期衰减一半（`w × 0.5^(年龄/半衰期)`），下限 1。
-2. **引用巩固**：单条引用 ≥ `consolidateThreshold`（默认 3）次则 +1 权重，上限 `weightCap`（默认 20）。
-3. **冲突浮出（v0.5.2）**：行为记忆与 preferences 冲突时不再静默减半——该条目豁免衰减/归档、保持活跃，并在列表与会话快照中置顶浮出，**由你人工裁决**（改掉冲突内容后恢复正常代谢）；记录 `CONFLICT` 审计事件。
-4. **归档**：权重低于 `decayThreshold`（默认 3）的记忆移入 `archive/`——移动，不删除。
-
-用法：
-
-```
-/memory dream            # 执行代谢
-/memory dream --dry-run  # 只预览，不落盘
-memory action=dream dryRun=true   # memory 工具等价写法
+# 4. 管理 UI —— DSH 设置页出现「记忆工作台」五个 tab：
+#    概览 / 知识库 / 代谢 / 反思 / 设置
 ```
 
-dry-run 示例输出：
+## 🚀 快速开始
 
-```
-【预览】扫描 120 条：衰减 12 · 巩固 3 · 冲突 0 · 归档 4
-备份：（dry-run 不执行备份）
-```
+```text
+# ① 保存一条用户偏好（重要记忆 → 触发人工审批；审批通过后入库）
+memory action=add track=user text="用户偏好：网络下载一律用国内镜像源" source="用户原话"
 
-**备份与回滚**：正式执行前，整个记忆库自动复制到 `backups/<时间戳>/`（含 `audit.jsonl`）。启动自检发现主文件损坏时，自动回滚到最近一次备份。回滚会记录 `ROLLBACK` 审计事件。
+# ② 查询（hybrid = 精确 + 语义融合，默认）
+memory action=query text="镜像源" mode=hybrid topK=5
 
-## 自动召回 / 自动保存（v0.4.0）
+# ③ 修复一条记忆（内容说错了，直接改文本，元数据不动）
+memory action=update fp="a1b2c3" text="用户偏好：网络下载一律用国内镜像源（pip 清华 / npm npmmirror）"
 
-记忆系统不再只靠显式调用，多了三层「自动」：
+# ④ 锁定重要条目（不参与衰减，永远进会话快照）
+memory action=pin fp="a1b2c3"
 
-1. **自动保存降级**：重要记忆默认走审批；当审批不可用（审批策略为 never、服务缺失）时，按 `approvalFallback` 配置自动保存（默认 `auto`），审计标记 `[降级]`，不丢记忆。可在设置页改为 `deny` 恢复 fail-closed。
-2. **自动巩固（用进废退）**：每次带关键词的查询/召回命中，该条 `hits+1` 并写回——越常被想起的记忆越不易被遗忘（审计 `RECALL`）。
-3. **自动代谢/反思**：`autoDreamDays`（默认 7）与 `autoReflectDays`（默认 3）——启动时距上次执行超过周期则自动 `dream` / `reflect`，审计 `AUTO-DREAM` / `AUTO-REFLECT`，设 0 关闭。
+# ⑤ 代谢 + 反思（建议跑一次看看效果；--dry-run 可以只预览）
+memory action=dream dryRun=true
+memory action=reflect dryRun=true
 
-## 深度反思（Reflect，v0.4.0）
+# ⑥ 审计（看看这段时间记忆系统发生了什么）
+memory action=audit sinceDays=7
+memory action=audit aggregate=true groupBy=action
 
-`/memory reflect`（或 `memory action=reflect`、设置页「深度反思」tab）——纯本地、无 LLM 的周期总结：
-
-1. **主题聚类**：全部记忆按 TF 向量余弦相似度聚类（≥0.25），找出反复出现的主题；
-2. **趋势统计**：近 7 天 vs 上一周写入量对比（活跃上升 / 趋于平稳）；
-3. **冲突提醒**：行为记忆与偏好的潜在冲突清单；
-4. **遗忘建议**：低权重记忆候选（可人工删除或归档）。
-
-报告写入 `longterm/reflections/<时间戳>.md`，支持 `--dry-run` 预览。
-
-## 知识页（v0.4.0 / v0.5.2 增强）
-
-设置页新增「知识库」tab：全文/语义搜索、按分层筛选，展示每条记忆的权重/引用/时间/锁定状态，支持一键锁定/解锁、**就地编辑**（行内编辑框，保留锁定/权重，审计 UPDATE，防重复）与**安全删除**（删除前自动备份，可回滚）。与偏好冲突的行为记忆自动**置顶**并红色徽标提示。配套 Web API：`GET /biomemory/api/entries`、`POST /biomemory/api/entries/pin|unpin|update|remove`、`POST /biomemory/api/reflect`。
-
-## 编辑与冲突浮出（v0.5.2）
-
-- 对话内编辑：`memory action=update fp="指纹" text="新内容"`，或 `/memory edit <fp> <新内容>`
-- 冲突浮出：行为记忆与偏好冲突时不再只是自动降权——`memory action=list`、知识页、会话冻结快照都会把冲突条目**置顶**并标注，由你裁决修改（改掉冲突内容后冲突标记自动消失）
-
-## 记忆钉
-
-锁定一条记忆：不参与衰减，无条件进入快照：
-
-```
-/memory pin <fp>      # 锁定
-/memory unpin <fp>    # 解锁
-memory action=pin fp="xxx"
-memory action=unpin fp="xxx"
+# ⑦ 运行时也可以在对话里用 /memory 命令
+/memory list
+/memory query 偏好
 ```
 
-快照注入优先级：**锁定 > preferences > knowledge > behavior**。
+## 🧠 使用指南
 
-## 审计
+### memory 工具（action 清单）
 
-双通道：
+| action | 参数 | 说明 |
+| --- | --- | --- |
+| `add` | `text`（必填）, `track`=user\|agent, `source` | 保存记忆；重要条目自动请求审批，审批不可用时按 `approvalFallback` 降级 |
+| `query` | `text`, `mode`=hybrid\|exact\|semantic, `topK`, `minWeight`, `projectId`, `fragmentTypes`, `includeArchived` | 查询；命中自动巩固（用进废退） |
+| `update` | `fp`, `text` | 编辑一条记忆（保留锁定/权重等元数据，文本变了向量置空重算，审计 UPDATE） |
+| `remove` | `fp` | 删除一条（删除前自动备份数据库，可回滚） |
+| `restore` | `fp` | 从最近备份回滚被删除的一条 |
+| `list` | `topK` | 列出全部条目；与偏好冲突的行为记忆置顶并标注 |
+| `pin` / `unpin` | `fp` | 锁定/解锁。锁定 = 不遗忘（防衰减/归档），不代表每轮必须执行 |
+| `dream` | `dryRun`, `resume`（默认 true） | 记忆代谢：衰减/巩固/冲突/归档；支持断点续跑 |
+| `reflect` | `dryRun` | 深度反思：主题聚类/趋势统计/冲突提醒/遗忘建议 |
+| `audit` | `type`, `sinceDays`, `aggregate`, `groupBy`（action\|day\|entry） | 结构化审计查询/聚合统计 |
 
-- `audit.log`——人类可读的一行摘要，向后兼容
-- `audit.jsonl`——结构化，每行一个 JSON 对象
+示例：
 
-事件：`WRITE` / `DECAY` / `CONSOLIDATE` / `CONFLICT` / `ARCHIVE` / `PIN` / `UNPIN` / `PREVIEW`（dry-run）/ `ROLLBACK`。
-
-示例行：
-
-```json
-{"t":"2026-08-16T05:00:00.000Z","event":"DECAY","fp":"abc123","text":"..."}
-```
-
-查询：
-
-```
-/memory audit                    # 最近事件
-/memory audit --since 7d         # 最近 7 天
-/memory audit --type DECAY       # 只看 DECAY 事件
+```text
+memory action=add track=user text="正式名「大肥鱼」，不用旧名" source="用户原话"
+memory action=query text="UI 渲染宽度规则" mode=hybrid topK=10 minWeight=0.1 fragmentTypes=decision,preference
 memory action=audit type="DECAY" sinceDays=7
+memory action=audit aggregate=true groupBy=day
 ```
 
-## 语义检索
+**记忆类别（自动推断，写入时记录）**：`user_decision`（用户明确决定）· `user_preference`（用户偏好）· `fact`（普通事实）· `model_suggestion`（模型建议）· `model_inference`（模型推测）。建议 ≠ 决定，模型建议永不冒充用户拍板。
 
-先做关键词匹配；命中不足时用纯 JS 的 TF-IDF + cosine 补充召回——**无原生模块、无外部依赖**，完全离线。语义命中的结果会在输出中标注"语义"。
+### memory_recall 工具
 
-## 配置
+跨会话召回（「你还记得…吗」场景），与 `memory query` 同底，语义上专用于回忆：
 
-```js
-// 插件配置（bundle 或 profile 层）
-{
-  halfLifeDays: 7,          // 半衰期（天）：衰减速度
-  decayThreshold: 3,        // 权重低于此值 → 归档
-  consolidateThreshold: 3,  // 引用 ≥ 此次数 → 巩固（+1 权重）
-  weightCap: 20,            // 巩固权重上限（防膨胀）
-  hotTokenLimit: 5000,      // 快照注入热区 token 上限
-  maxQueryResults: 20,      // 查询返回上限
-  petEndpoint: null         // 可选：本地通知服务 URL（默认关闭）
-}
+```text
+memory_recall text="去年定下的版本规则"
 ```
 
-## 兼容性
+### /memory 命令族
 
-- Node >= 22.19.0
-- `@deepseek-ai/dsh-*` >= 0.1.1-rc.2 运行时（当前 latest 线；0.1.2-rc.1 已测，按实际 lib 源码核对实现）
+| 命令 | 说明 |
+| --- | --- |
+| `/memory list` | 列出全部条目（冲突条目置顶） |
+| `/memory query <词>` | 关键词 + 语义检索 |
+| `/memory add <内容>` | 直接写入（人类发起，免审批） |
+| `/memory edit <fp> <新内容>` | 编辑一条 |
+| `/memory remove <fp>` | 删除一条（可回滚） |
+| `/memory undo <fp>` | 回滚被删除的一条 |
+| `/memory pin <fp>` / `unpin <fp>` | 锁定 / 解锁 |
+| `/memory entries [词]` | 列出条目（可带过滤词） |
+| `/memory dream [--dry-run]` | 记忆代谢 |
+| `/memory reflect [--dry-run]` | 深度反思 |
+| `/memory audit [--since 7d] [--type DECAY]` | 审计查询 |
 
-## 常见故障排查（FAQ）
+### 冻结快照注入
 
-- **Node 版本**：要求 Node >= 22.19.0；旧版本可能无法加载插件。
-- **DSH 运行时兼容性**：目标 `@deepseek-ai/dsh-*` >= 0.1.1-rc.2——请核对实际运行的运行时版本。
-- **记忆目录问题**：写入失败时检查记忆根目录读写权限；若设置了 `DSH_MEMORY_ROOT`，须指向存在且可写的目录。
-- **原生模块冲突**：本插件**无任何原生依赖**——纯 JS 实现，不会与其他插件的原生模块冲突。
+会话启动时，插件自动把高价值记忆冻结注入 system prompt（注册即冻结，快照标记「会话冻结」）：
 
-## 使用场景演示
+- 头部明确三层概念：**本快照 = Applied Context**（已注入 prompt）；Memory（存储层）与 Retrieved（查询候选）不在此列；**检索到 ≠ 已采用**。
+- 注入顺序：**锁定记忆（最高优先级，不参与衰减）→ 用户偏好（最高优先级，写入须尊重）→ 近期知识 → 近期行为**。
+- 与偏好冲突的行为记忆**置顶并标注 `[冲突]`**，由你裁决修改。
+- 热区 token 预算 `hotTokenLimit`（默认 5000），超出时保留偏好与锁定段。
 
-- **个人知识库长期维护**：长期积累事实与决策，日后像第二大脑一样检索；衰减与归档自动维持整洁，无需手动清理。
-- **项目经验沉淀**：教训、习惯、决策按项目存于 `projects/<项目>/`，主题被反复引用时权重自动巩固。
-- **跨会话偏好记忆**：偏好每次会话启动都注入，重要条目用记忆钉锁定保持稳定，冲突仲裁确保偏好对行为始终具有权威性。
+### 分级审批门
 
-## 贡献指南
+| 记忆类型 | 审批方式 |
+| --- | --- |
+| 用户偏好 / 项目决策 / 踩坑教训（`track=user` 或命中重要词） | **人工审批**（ask） |
+| 普通事实 | 自动写入（auto） |
+| 审批通道不可用（策略 never / 服务缺失） | 按 `approvalFallback`：`auto` = 自动保存并审计降级标记 · `deny` = 拒绝写入（fail-closed） |
 
-- **报告 issue**：附上 DSH 运行时版本、Node 版本与复现步骤。
-- **提交 PR**：fork 仓库 → 修改 → 补充/更新测试 → 提交前运行 `npm test`。
-- **运行测试**：`npm test`（node:test）；新行为应附带测试覆盖。
+### 记忆代谢（Dream）
 
-## License
+相当于睡眠时大脑做的事——`/memory dream` 或 `memory action=dream`：
 
-MIT
+1. **半衰期衰减**（默认 7 天）：`w × 0.5^(年龄/半衰期)`，下限 1。
+2. **引用巩固**：单条命中引用 ≥ `consolidateThreshold`（默认 3）次则 +1 权重，上限 `weightCap`（默认 20）。
+3. **冲突豁免**：与偏好冲突的行为记忆不衰减不归档、保持活跃，在列表与快照中**置顶浮出**，由你人工裁决（编辑改掉冲突内容后恢复正常代谢），记 `CONFLICT` 事件。
+4. **低权重归档**：权重低于 `decayThreshold`（默认 3）→ `status=archived`，**移动不删除**。
+
+执行前自动备份数据库（保留最近 7 次，`ROLLBACK` 事件可溯）；每 100 条写检查点，中断后 `resume=true` 断点续跑；`--dry-run` 只预览不落盘。
+
+### 深度反思（Reflect）
+
+纯本地、无 LLM 的周期总结：**主题聚类**（TF 向量余弦相似度 ≥ 0.25）· **趋势统计**（近 7 天 vs 上一周写入量）· **冲突提醒**（行为与偏好潜在冲突清单）· **遗忘建议**（低权重候选）。报告写入 `longterm/reflections/<时间戳>.md`，支持 `--dry-run` 预览。
+
+### 知识库（管理 UI）
+
+DSH 设置页「记忆工作台」五个 tab：
+
+| tab | 功能 |
+| --- | --- |
+| 概览 | 存储统计（条目/锁定/分层/向量数/审计近 7 天）、模型状态、迁移状态、冲突与低权重速览 |
+| 知识库 | 全文/语义搜索（exact/semantic/hybrid）、按分层筛选、权重/引用/时间/锁定状态展示；一键锁定/解锁、**就地编辑**、**安全删除**（先备份可回滚）；冲突条目置顶 + 红色徽标 |
+| 代谢 | 一键执行 / 预览记忆代谢，展示衰减/巩固/冲突/归档结果 |
+| 反思 | 一键执行 / 预览深度反思，报告罗列与冲突就地裁决（编辑或删除） |
+| 设置 | 全部配置项可视化编辑（含恢复默认） |
+
+### 审计
+
+双通道：**SQLite `audit_log` 表**（结构化，五元组 `t / actor / action / entry_id / detail`，主通道）+ **`audit.log`**（人类可读一行摘要，向后兼容）。
+
+事件类型：`WRITE` / `DECAY` / `CONSOLIDATE` / `CONFLICT` / `ARCHIVE` / `RECALL` / `ROLLBACK` / `AUTO-DREAM` / `AUTO-REFLECT`（其余辅助事件：`PIN` / `UNPIN` / `UPDATE` / `REMOVE` / `RESTORE` / `MIGRATE` / `VECTORIZE` / `PREVIEW` / `REFLECT` / `CONFIG`）。
+
+```text
+/memory audit                      # 最近事件
+/memory audit --since 7d           # 最近 7 天
+/memory audit --type DECAY         # 只看 DECAY
+memory action=audit type="DECAY" sinceDays=7
+memory action=audit aggregate=true groupBy=action   # 聚合统计
+```
+
+### 语义检索
+
+先关键词匹配；命中不足时用纯 JS 的 **TF-IDF + cosine** 补充召回（无原生模块、完全离线）。配置了本地嵌入模型（bge-small-zh-v1.5，512 维，存储于 `~/.dsh/models/`）且可用时，自动升级为 **hybrid** 融合检索（RRF 变体）；模型缺失/加载失败自动降级为关键词检索，记忆功能不受影响。语义命中在输出中标注「语义」。
+
+## ⚙️ 配置
+
+| key | 默认值 | 说明 |
+| --- | --- | --- |
+| `halfLifeDays` | `7` | 半衰期（天）：权重每过半衰期衰减一半 |
+| `decayThreshold` | `3` | 权重低于此值 → 归档（移动，不删除） |
+| `consolidateThreshold` | `3` | 引用 ≥ 此次数 → 巩固（+1 权重） |
+| `weightCap` | `20` | 巩固权重上限（防膨胀） |
+| `hotTokenLimit` | `5000` | 快照注入热区 token 上限 |
+| `maxQueryResults` | `20` | 查询返回上限 |
+| `approvalFallback` | `auto` | 审批不可用时：`auto`=自动保存并审计降级 / `deny`=拒绝写入 |
+| `autoDreamDays` | `7` | 启动时距上次代谢 ≥ 此天数自动执行（`0`=关闭） |
+| `autoReflectDays` | `3` | 启动时距上次反思 ≥ 此天数自动执行（`0`=关闭） |
+| `conflictOverlap` | `3` | 冲突检测：行为与单条偏好的专有双字重叠阈值 |
+| `petEndpoint` | `null` | 可选：本地桌宠通知服务 URL（默认关闭） |
+
+可在设置页「设置」tab 可视化修改，或通过 `POST /biomemory/api/config` 调整；持久化为 `biomemory.config.json`（透明可改）。
+
+## 🔌 集成
+
+### Web API（DshWebServer 注册，prefix `/biomemory/api`）
+
+| 方法 / 路径 | 说明 |
+| --- | --- |
+| `GET /status` | 存储统计 + 配置 + 模型/迁移状态 |
+| `GET /config` · `POST /config` | 读取 / 更新配置（白名单字段，`reset:true` 恢复默认） |
+| `POST /dream` | 记忆代谢（body `{ "dryRun": true }`） |
+| `POST /reflect` | 深度反思（body `{ "dryRun": true }`） |
+| `GET /entries` | 条目列表（`q` 搜索词 / `layer` 分层 / `mode` 检索模式 / `limit` 上限） |
+| `POST /entries/pin` · `/unpin` · `/remove` · `/restore` · `/update` | 条目管理（body 含 `fp` 等） |
+| `POST /vectors` · `GET /vectors` | 触发向量化 / 查询向量化状态 |
+| `GET /audit` · `GET /audit/aggregate` | 审计查询（`sinceDays`/`type`）/ 聚合统计（`groupBy`） |
+
+### 通知（可选）
+
+配置 `petEndpoint` 后，记忆保存等事件通过 HTTP POST 通知本地桌宠气泡（离线静默失败，不影响记忆本体）。
+
+### 环境变量
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `DSH_BIOMEMORY_DIR` | `~/.dsh/biomemory` | SQLite 数据目录 |
+| `DSH_MEMORY_ROOT` | `~/.dsh/memory` | 旧 Markdown 根目录（迁移源与只读备份） |
+| `DSH_MODELS_ROOT` | `~/.dsh/models` | 本地嵌入模型目录 |
+| `DSH_MEMORY_DEBUG` | — | `1` 时输出调试日志 |
+
+## 🛡 兼容性
+
+- **Node ≥ 22.19.0**（`node:sqlite` 内置要求）。
+- **运行时**：`@deepseek-ai/dsh-*` ≥ 0.1.1-rc.2（当前 latest 线；0.1.2-rc.1 已实测，按实际 lib 源码核对实现）。
+- **peerDependencies**：`@deepseek-ai/cordis ^4.0.2`、`@deepseek-ai/dsh-session >= 0.1.1-rc.2`、`@deepseek-ai/dsh-tools >= 0.1.1-rc.2`。
+- **零原生 npm 依赖**：数据层为 `node:sqlite` 内置 + 纯 JS，不会与其他插件的原生模块冲突；语义检索模型为可选离线组件，缺失自动降级。
+- v0.6.3 起 memory 工具返回值兼容 dsh-tools 新版 lossless JSON 校验（undefined/NaN 字段统一置 null，避免工具校验报错）。
+
+## 📜 版本历史
+
+### v0.6.3（2026-09-05）· 兼容性 · 主题适配
+
+- 适配 DSH 0.1.2-rc.1：memory 工具返回值兼容 dsh-tools 新版 lossless JSON 校验（undefined/NaN 字段置 null，修复工具报错）。
+- 插件 UI 深色适配：跟随 DSH 主题 `--dsw-alias-*` 变量，`body[data-ds-dark-theme]` 双通道探测 + MutationObserver 实时切换。
+
+### v0.6.2（2026-09-05）· UI 重构
+
+- 管理 UI 按「骨架/血肉/呼吸」设计语言重构：现代极简——neutralSurface `#F5F6F8` 底 + 白色圆角卡片分层（max-width 880 居中）、主色下划线 tabs、4/8px 栅格、150ms 动效、字号 12/14/16/20/28。
+- 配色全部取自 dsh-fuse 设计令牌（primary `#2563EB` / accent `#0EA5E9` / border `#E5E7EB` / text `#1A1A1A`），零硬编码；确立紫粉品牌色（记忆神经）。
+
+### v0.6.1（2026-09-05）· 认知卫生 · 来源可溯源
+
+- Memory / Retrieved / Applied 三层分离（检索到 ≠ 已采用）。
+- 记忆钉语义修正：锁定 = 不遗忘 + relevance admission（与用户最新明确决定冲突时以最新为准）。
+- 记忆类别 `memory_class`（user_decision / user_preference / fact / model_suggestion / model_inference，建议 ≠ 决定）+ 来源 `source_ref`。
+- schema 演进：entries 表新增列，旧库启动自动 ALTER（幂等）。
+
+### v0.6.0（2026-08-31）· 架构重构 · 自动沉淀
+
+- `index.mjs` 拆为 shared / store / retrieve / meta / snapshot / gate / notify / session-state 模块（行为不变，57 测试全绿）。
+- 会话结束自动沉淀：`turn/end` 后注入总结指令，模型用 `memory add` 写入；写即清标记、5 分钟防呆、严格去重。
+- 修复：`files` 白名单补全全部模块（避免发布后 `ERR_MODULE_NOT_FOUND`）；`/reflect` `/dream` 端点读取请求体 `dryRun`。
+
+### v0.5.3（2026-08-31）· UI 现代化
+
+- 设置页改用 dsh-fuse 设计令牌（现代极简：neutralSurface 底 + 白色卡片、主色 `#2563EB`、4/8px 栅格）；peerDeps 升至 `>=0.1.1-rc.1`。
+
+### v0.5.2（2026-08-20）· 可编辑 · 冲突浮出 · 回滚
+
+- 可编辑记忆（update 保留锁定/权重，审计 UPDATE，防重复）+ 冲突浮出置顶（行为与偏好冲突不再静默降权，置顶待裁决）。
+- 单条回滚（restore / `/memory undo`，从最近备份恢复，向量置空重算，审计 RESTORE）。
+
+### v0.5.0（2026-08-20）· 数据层革新
+
+- SQLite 数据层（`~/.dsh/biomemory/biomemory.db`，node:sqlite 内置、WAL、零外部依赖）+ 本地嵌入语义检索（bge-small-zh-v1.5，512 维，离线）。
+- 旧 Markdown 记忆首次启动自动迁移（保留只读备份）+ 审计聚合（按 action/day/entry）+ dream 断点续跑（检查点）。
+
+### v0.4.0 · 自动层 · 反思 · 知识页
+
+- 自动召回（命中巩固，用进废退）/ 自动保存（审批降级 + 自动代谢/反思周期）+ 深度反思 + 知识页（设置页 tab）。
+
+### v0.3.x · 基础能力
+
+- 记忆代谢（dream）+ 记忆钉（pin）+ 结构化审计（audit.jsonl）+ 语义检索（TF-IDF）+ 设置面板。
+
+## ❓ 常见问题
+
+- **Node 版本**：要求 Node ≥ 22.19.0（`node:sqlite` 内置）；旧版本可能无法加载插件。
+- **DSH 运行时兼容性**：目标 `@deepseek-ai/dsh-*` ≥ 0.1.1-rc.2——请核对实际运行的运行时版本（0.1.2-rc.1 已实测）。
+- **工具报错（Invalid object / lossless JSON）**：升级到 v0.6.3+，返回值已兼容 dsh-tools 新版严格校验。
+- **语义检索不可用**：检查 `~/.dsh/models/bge-small-zh-v1.5` 模型是否存在；缺失时自动降级为关键词 + TF-IDF 检索，记忆功能不受影响。
+- **记忆写入失败**：检查 `~/.dsh/biomemory/`（及 `DSH_BIOMEMORY_DIR`）读写权限；审批被拒时确认审批策略与 `approvalFallback` 设置。
+- **旧 Markdown 记忆去哪了**：首次启动已自动迁移进 SQLite；`~/.dsh/memory/` 保留为只读备份，不删除。
+- **误删的条目还能找回吗**：删除前自动备份数据库（保留最近 7 次），`/memory undo <fp>` 或 `memory action=restore fp=...` 即可恢复。
+- **原生模块冲突**：本插件无任何原生依赖——纯 JS 实现，不会与其他插件冲突。
+
+## 🧪 开发
+
+```bash
+# 运行测试（node:test，60 个用例全绿）
+npm test
+```
+
+模块结构：`index.mjs`（接线层）+ `shared`（配置/审计/冲突）· `store`（写入/钉/删/回滚/迁移）· `retrieve`（查询/语义）· `meta`（代谢/反思）· `snapshot`（快照/会话沉淀）· `gate`（审批/自检）· `notify`（桌宠通知）· `session-state` · `db`（SQLite 数据层）· `embed`（嵌入模型）。
+
+**贡献**：fork → 修改 → 补充/更新测试 → 提交前运行 `npm test`；报 issue 请附 DSH 运行时版本、Node 版本与复现步骤。
+
+## 📄 License
+
+MIT — 完整文本见 [LICENSE](LICENSE)。
+
+> Copyright © 2026 dsh-biomemory contributors
+>
+> Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the conditions in the LICENSE file.

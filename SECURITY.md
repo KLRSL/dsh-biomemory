@@ -15,7 +15,7 @@ Please do **not** open public issues for security vulnerabilities.
 
 dsh-biomemory is **local-first**:
 
-- All memory data is stored in plain Markdown files on your own machine (`~/.dsh/memory` by default, or `$DSH_MEMORY_ROOT`) — nothing is ever sent over the network.
+- All memory data is stored in a local SQLite database (`~/.dsh/biomemory/biomemory.db` via `node:sqlite`, WAL mode, zero external DB dependency) — nothing is ever sent over the network.
 - The optional `petEndpoint` config is an outbound notification to a **local** service of your own choosing; it is disabled by default.
 - Important memory writes require human approval; the plugin fails closed when no approval channel is available.
 
@@ -23,7 +23,7 @@ dsh-biomemory is **local-first**:
 
 | Version | Supported |
 |---------|-----------|
-| 0.2.x   | ✅ |
+| 0.6.x   | ✅ |
 
 ## Audit
 
