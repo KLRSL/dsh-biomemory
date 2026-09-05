@@ -2,9 +2,18 @@
 
 > [中文文档](README.zh-CN.md) · [English](README.md)
 
-> **Version v0.6.0** · MIT License · **Compatibility**: DeepSeek Harness ≥ 0.1.1-rc.2 (current latest line; tested on 0.1.2-rc.1 too)
+> **Version v0.6.3** · MIT License · **Compatibility**: DeepSeek Harness ≥ 0.1.1-rc.2 (current latest line; tested on 0.1.2-rc.1 too)
 
 A cross-session memory plugin for DeepSeek Harness (DSH), designed like a human brain: layered memory, graded approval, memory metabolism, fully transparent.
+
+**v0.6.2 (2026-09-05) — management UI rebuild on the design language:** settings/knowledge page (overview / knowledge / metabolism / reflect / settings tabs) switched from the old "monumental" look to modern minimalism — neutralSurface #F5F6F8 base with white radius-16 layered cards (max-width 880 centered), primary-underline tabs, 4/8px grid, 150ms restrained transitions; colors strictly from dsh-fuse default tokens (`--bm-*` variables, zero hardcoded hex); semantic colors kept (conflict=red tint + inset bar, pinned=primary, chart fills by class); zero class/API changes, all tests green (60/60 + settings-page script).
+
+**v0.6.1 (2026-09-05) — cognitive hygiene & source traceability (code-review findings):**
+- **Memory ≠ Retrieved ≠ Applied**: tool description and snapshot header now state the three layers explicitly — the snapshot is the Applied Context (already injected), Memory is the store, Retrieved is query candidates; retrieved ≠ adopted.
+- **Pin semantics fixed (relevance admission)**: pin = no-forgetting only (exempt from decay/archive), no longer implies "must apply every turn"; snapshot lock section gains an admission note, latest explicit user decision wins on conflict.
+- **memory_class** auto-inferred on write: `user_decision` / `user_preference` / `fact` / `model_suggestion` / `model_inference` — suggestion ≠ decision; shown in query/snapshot/list output.
+- **source_ref**: `memory add` accepts a `source` field (defaults to `session:<id>`); WRITE audit records class + source.
+- **Schema**: new `source_ref` / `memory_class` columns; existing DBs are ALTERed idempotently at open.
 
 **v0.6.0 (2026-08-31) — architecture refactor + session-end auto-consolidation:**
 

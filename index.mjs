@@ -65,19 +65,23 @@ function makeMemoryTool(ctx) {
     name: 'memory',
     description: [
       '跨会话记忆系统：保存/查询值得记住的事实、偏好、教训。',
-      '用法: memory action=add text="..." [track=user|agent] —— 保存（重要项自动请求审批，审批不可用时按配置自动保存）',
+      '三层概念：Memory=存储层（所有条目）；Retrieved=查询候选（query/list 返回的子集）；',
+      'Applied=实际注入 prompt 的内容（会话启动时冻结的快照，见记忆快照段）。查询≠注入，检索到不代表已采用。',
+      '用法: memory action=add text="..." [track=user|agent] [source="来源说明"] —— 保存（重要项自动请求审批，审批不可用时按配置自动保存）',
       '      memory action=query text="关键词" [mode=hybrid|exact|semantic] [projectId=项目] [topK=10] [minWeight=0.1] [fragmentTypes=decision,preference] [includeArchived=false] —— 查询',
       '           （hybrid=精确+语义混合（默认）；exact=关键词精确；semantic=向量语义；命中自动巩固）',
       '      memory action=update fp="指纹" text="新内容" —— 编辑一条（保留锁定/权重，自动审计可追溯）',
       '      memory action=remove fp="指纹" —— 删除一条（自动备份，可回滚）',
       '      memory action=restore fp="指纹" —— 从最近备份回滚被删除的一条',
       '      memory action=list —— 列出全部条目（与偏好冲突的行为记忆置顶并标注）',
-      '      memory action=pin fp="指纹" —— 锁定（不参与衰减）',
+      '      memory action=pin fp="指纹" —— 锁定（不参与衰减；注意：锁定=不遗忘，不自动参与执行）',
       '      memory action=unpin fp="指纹" —— 解锁',
       '      memory action=dream [dryRun=true] [resume=true] —— 记忆代谢（衰减/巩固/归档，支持断点续跑）',
       '      memory action=reflect [dryRun=true] —— 深度反思（主题聚类/趋势/冲突/遗忘建议）',
       '      memory action=audit [type="DECAY"] [sinceDays=7] [aggregate=true] [groupBy=action|day|entry] —— 结构化审计查询/聚合',
       '保存原则：用户偏好/纠正/项目决策/踩坑教训要保存；琐事、一次性路径、可从代码重新推导的事实不保存。',
+      '记忆类别（自动推断，写入时记录）：user_decision=用户明确决定 / user_preference=用户偏好 / fact=普通事实',
+      '/ model_suggestion=模型建议 / model_inference=模型推测（建议≠决定，模型推测永远不能当作用户已拍板）。',
     ].join('\n'),
     parameters: {
       type: 'object',
@@ -85,6 +89,7 @@ function makeMemoryTool(ctx) {
         action: { type: 'string', enum: ['add', 'query', 'update', 'remove', 'restore', 'list', 'pin', 'unpin', 'dream', 'reflect', 'audit'], description: '操作' },
         text: { type: 'string', description: 'add 的内容、query 的关键词、update 的新内容' },
         track: { type: 'string', enum: ['user', 'agent'], description: 'user=用户偏好/知识；agent=行为/教训（默认 agent）' },
+        source: { type: 'string', description: 'add 时信息来源说明（如「用户原话」「文档 x 第 3 节」）；不填则记录会话 ID（source_ref 字段）' },
         fp: { type: 'string', description: 'update/remove/restore/pin/unpin 时按指纹' },
         dryRun: { type: 'boolean', description: 'dream/reflect 时预览不执行' },
         type: { type: 'string', description: 'audit 过滤事件类型' },
@@ -124,7 +129,7 @@ function makeMemoryTool(ctx) {
         if (!value.ok) return [{ type: 'text', text: value.error || 'memory 操作失败' }]
         if (Array.isArray(value.entries)) {
           if (!value.entries.length) return [{ type: 'text', text: '（无匹配记忆）' }]
-          return [{ type: 'text', text: value.entries.map((e) => `- [${e.layer}]${e.semantic ? '（语义）' : ''}${e.status === 'conflict' ? ' [冲突]' : ''} ${e.text}`).join('\n') }]
+          return [{ type: 'text', text: value.entries.map((e) => `- [${e.layer}]${e.memory_class ? `[${e.memory_class}]` : ''}${e.semantic ? '（语义）' : ''}${e.status === 'conflict' ? ' [冲突]' : ''} ${e.text}`).join('\n') }]
         }
         if (value.report) {
           const r = value.report
@@ -151,13 +156,13 @@ function makeMemoryTool(ctx) {
       return { card: 'generic', title: `记忆：${args?.action || ''}`, kind: 'other', rawInput: args }
     },
     async execute(args, exec) {
-      const { action, text = '', track = 'agent', fp, dryRun, type, sinceDays, mode, projectId, topK, minWeight, fragmentTypes, includeArchived, aggregate, groupBy, resume } = args || {}
+      const { action, text = '', track = 'agent', fp, dryRun, type, sinceDays, mode, projectId, topK, minWeight, fragmentTypes, includeArchived, aggregate, groupBy, resume, source } = args || {}
       const sessionId = exec.agent?.id
       if (action === 'add') {
         if (!text.trim()) return { ok: false, error: 'text 必填' }
         const g = await gateWrite(ctx, { track, text: text.trim() })
         if (!g.approved) return { ok: false, error: `写入未获批准（${g.outcome || 'denied'}）——重要记忆需人工审批（可设置 approvalFallback=auto 自动保存）` }
-        const r = writeEntry({ track, text: text.trim(), sessionId, approved: g.mode === 'ask', mode: g.mode })
+        const r = writeEntry({ track, text: text.trim(), sessionId, approved: g.mode === 'ask', mode: g.mode, source })
         return { ok: true, ...r, mode: g.mode }
       }
       if (action === 'query') {
@@ -233,7 +238,7 @@ function makeRecallTool() {
       },
       render(args, value) {
         if (!Array.isArray(value.entries) || !value.entries.length) return [{ type: 'text', text: '（无匹配记忆）' }]
-        return [{ type: 'text', text: value.entries.map((e) => `- [${e.layer}] ${e.text}`).join('\n') }]
+        return [{ type: 'text', text: value.entries.map((e) => `- [${e.layer}]${e.memory_class ? `[${e.memory_class}]` : ''} ${e.text}`).join('\n') }]
       },
     },
     presentCall(args) {
@@ -260,12 +265,12 @@ function registerMemoryCommand(ctx) {
         const sessionId = agent?.id
         if (verb === 'list') {
           const es = queryEntries('')
-          return { kind: 'success', text: es.length ? es.map((e) => `- [${e.layer}] ${e.text}`).join('\n') : '（记忆为空）' }
+          return { kind: 'success', text: es.length ? es.map((e) => `- [${e.layer}]${e.memory_class ? `[${e.memory_class}]` : ''} ${e.text}`).join('\n') : '（记忆为空）' }
         }
         if (verb === 'query') {
           const q = rest.join(' ')
           const es = queryEntries(q)
-          return { kind: 'success', text: es.length ? es.map((e) => `- [${e.layer}] ${e.text}`).join('\n') : `（无匹配：${q}）` }
+          return { kind: 'success', text: es.length ? es.map((e) => `- [${e.layer}]${e.memory_class ? `[${e.memory_class}]` : ''} ${e.text}`).join('\n') : `（无匹配：${q}）` }
         }
         if (verb === 'add') {
           if (!rest.length) return { kind: 'success', text: '用法: /memory add <内容>' }

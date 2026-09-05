@@ -92,6 +92,11 @@ function migrateSchema(db) {
       v TEXT
     );
   `)
+  // v0.6.1：记忆来源与语义类别（评审建议 source_ref + memory_class）——
+  // 旧库用 ALTER TABLE 补列（列已存在时 ADD COLUMN 抛错，静默忽略）
+  for (const ddl of ['source_ref TEXT', 'memory_class TEXT']) {
+    try { db.exec(`ALTER TABLE entries ADD COLUMN ${ddl}`) } catch { /* 列已存在 */ }
+  }
 }
 
 // ---------- 条目 CRUD ----------
@@ -118,6 +123,8 @@ function toRow(e) {
     last_accessed: e.last_accessed ?? null,
     status: e.status || 'active',
     vector: e.vector ?? null,
+    source_ref: e.source_ref ?? null,
+    memory_class: e.memory_class ?? null,
   }
 }
 
@@ -142,6 +149,8 @@ function fromRow(r) {
     created_at: r.created_at ?? undefined,
     last_accessed: r.last_accessed ?? undefined,
     status: r.status,
+    source_ref: r.source_ref ?? undefined,
+    memory_class: r.memory_class ?? undefined,
   }
 }
 
@@ -174,26 +183,28 @@ export function upsertEntry(e) {
       last_accessed: e.last_accessed !== undefined ? e.last_accessed : existing.last_accessed,
       status: keep(e.status, existing.status),
       vector: e.vector !== undefined ? e.vector : existing.vector,
+      source_ref: e.source_ref !== undefined ? e.source_ref : existing.source_ref,
+      memory_class: e.memory_class !== undefined ? e.memory_class : existing.memory_class,
     }
     db.prepare(`UPDATE entries SET
       layer=?, project_id=?, project_name=?, fragment_type=?, kind=?, mode=?,
       summary=?, text=?, entities=?, weight=?, hits=?, pinned=?, pin_reason=?,
-      last_accessed=?, status=?, vector=?
+      last_accessed=?, status=?, vector=?, source_ref=?, memory_class=?
       WHERE fp = ?`).run(
       m.layer, m.project_id, m.project_name, m.fragment_type, m.kind, m.mode,
       m.summary, m.text, m.entities, m.weight, m.hits, m.pinned, m.pin_reason,
-      m.last_accessed, m.status, m.vector, r.fp,
+      m.last_accessed, m.status, m.vector, m.source_ref, m.memory_class, r.fp,
     )
     return existing.entry_id
   }
   db.prepare(`INSERT INTO entries
     (entry_id, fp, layer, project_id, project_name, fragment_type, kind, mode,
      summary, text, entities, weight, hits, pinned, pin_reason, created_at,
-     last_accessed, status, vector)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+     last_accessed, status, vector, source_ref, memory_class)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
     r.entry_id, r.fp, r.layer, r.project_id, r.project_name, r.fragment_type, r.kind, r.mode,
     r.summary, r.text, r.entities, r.weight, r.hits, r.pinned, r.pin_reason,
-    r.created_at ?? isoNow(), r.last_accessed, r.status, r.vector,
+    r.created_at ?? isoNow(), r.last_accessed, r.status, r.vector, r.source_ref, r.memory_class,
   )
   return r.entry_id
 }

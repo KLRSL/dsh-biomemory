@@ -183,7 +183,23 @@ export async function ensureVectors() {
 
 // ---------- 写入记忆（带审计；approval 在调用方 gate） ----------
 
-export function writeEntry({ track, text, sessionId, approved, mode }) {
+/** 记忆语义类别（memory_class）推断：
+ *  user_decision（用户明确决定）/ user_preference（用户偏好）/ fact（普通事实）
+ *  / model_suggestion（模型建议）/ model_inference（模型推测）。
+ *  核心原则：assistant suggested X ≠ user decided X —— track 是第一依据，
+ *  模型建议/推测只可能来自 agent 轨，绝不冒充用户决定。 */
+export function inferMemoryClass({ track, text }) {
+  const t = String(text || '')
+  if (track === 'user') {
+    if (/决定|拍板|选(?:用|定|型)|采用|定为|定为|就这么(?:定|办|用)|方案|弃用|定为|推(?:翻|用)|选择/.test(t)) return 'user_decision'
+    if (/喜欢|偏好|希望|不要|禁止|必须|一贯|以后都|更(?:喜欢|习惯|倾向)/.test(t)) return 'user_preference'
+    return 'fact'
+  }
+  if (/建议|可以试试|不妨|推荐|我建议|更好的做法|或许可以/.test(t)) return 'model_suggestion'
+  return 'model_inference'
+}
+
+export function writeEntry({ track, text, sessionId, approved, mode, source }) {
   db.openDb()
   const fp = fingerprint(text)
   const dup = db.getByFp(fp)
@@ -193,6 +209,8 @@ export function writeEntry({ track, text, sessionId, approved, mode }) {
   const modeLabel = mode === 'fallback' ? '降级' : (mode === 'ask' ? '审批' : (mode === 'auto' ? '自动' : (approved ? '审批' : '自动')))
   const layer = track === 'user' ? 'longterm' : 'longterm'
   const fragmentType = track === 'user' ? (isImportant(text, track) ? 'preference' : 'fact') : 'lesson'
+  const memoryClass = inferMemoryClass({ track, text })
+  const sourceRef = source || (sessionId ? `session:${sessionId}` : null)
   const entryId = db.upsertEntry({
     fp, layer,
     fragment_type: fragmentType,
@@ -203,8 +221,10 @@ export function writeEntry({ track, text, sessionId, approved, mode }) {
     hits: 0,
     created_at: db.isoNow(),
     pinned: false,
+    source_ref: sourceRef,
+    memory_class: memoryClass,
   })
-  db.audit('WRITE', { entry_id: entryId, detail: { fp, track, approved: modeLabel, fallback: mode === 'fallback' ? true : undefined } })
+  db.audit('WRITE', { entry_id: entryId, detail: { fp, track, approved: modeLabel, fallback: mode === 'fallback' ? true : undefined, memory_class: memoryClass, source_ref: sourceRef } })
   if (track === 'user') {
     appendFile(PATHS.preferences, `- [${nowStamp()}] ${text.trim()}\n`)
   }
