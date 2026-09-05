@@ -10,7 +10,7 @@
 
 import * as db from './db.mjs'
 import * as embed from './embed.mjs'
-import { PATHS, readFile, CFG, dbgLog } from './shared.mjs'
+import { PATHS, CFG, dbgLog, prefsText } from './shared.mjs'
 import { entryStatus, consolidateHits } from './store.mjs'
 
 // ---------- 纯 JS TF-IDF + cosine（无外部依赖，语义检索降级） ----------
@@ -83,7 +83,7 @@ export async function queryEntries(query, limit = CFG.maxQueryResults, opts = {}
   const minWeight = opts.minWeight ?? 0.1
   const fragmentTypes = Array.isArray(opts.fragmentTypes) && opts.fragmentTypes.length ? new Set(opts.fragmentTypes) : null
   const includeArchived = opts.includeArchived === true
-  const prefsText = readFile(PATHS.preferences)
+  const prefsTextStr = prefsText()
 
   const ql = (query || '').toLowerCase()
   let entries = db.allEntries({ includeArchived })
@@ -113,7 +113,7 @@ export async function queryEntries(query, limit = CFG.maxQueryResults, opts = {}
     const e = r.entry
     if (!e) continue
     const isSem = mode !== 'exact' && !kwHits.has(e.fp)
-    out.push({ layer: e.layer, fp: e.fp, text: e.text, weight: e.weight, semantic: isSem, score: r.score, fragment_type: e.fragment_type, memory_class: e.memory_class, source_ref: e.source_ref, created_at: e.created_at, status: entryStatus(e, prefsText) })
+    out.push({ layer: e.layer, fp: e.fp, text: e.text, weight: e.weight, semantic: isSem, score: r.score, fragment_type: e.fragment_type, memory_class: e.memory_class, source_ref: e.source_ref, created_at: e.created_at, status: entryStatus(e, prefsTextStr) })
     if (ql) hitFps.add(e.fp)
   }
   // 精确关键词命中未进 top-N 的也补入（保底不丢）
@@ -121,7 +121,7 @@ export async function queryEntries(query, limit = CFG.maxQueryResults, opts = {}
     const inOut = new Set(out.map((o) => o.fp))
     for (const e of entries) {
       if (kwHits.has(e.fp) && !inOut.has(e.fp) && out.length < limit) {
-        out.push({ layer: e.layer, fp: e.fp, text: e.text, weight: e.weight, semantic: false, memory_class: e.memory_class, source_ref: e.source_ref, status: entryStatus(e, prefsText) })
+        out.push({ layer: e.layer, fp: e.fp, text: e.text, weight: e.weight, semantic: false, memory_class: e.memory_class, source_ref: e.source_ref, status: entryStatus(e, prefsTextStr) })
         inOut.add(e.fp)
       }
     }

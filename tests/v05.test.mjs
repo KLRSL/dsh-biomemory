@@ -252,7 +252,8 @@ test('updateEntryText：编辑保留锁定/权重，审计 UPDATE，防重复', 
 })
 
 test('冲突浮出：行为与偏好冲突标记 status 并在浏览时置顶', async () => {
-  fs.writeFileSync(path.join(tmpDir, 'preferences.md'), '- [2026-08-15] 禁止内网直连访问\n', 'utf-8')
+  // 单轨（v0.6.1）：偏好经 SQLite 注入（不再读 Markdown）
+  db.upsertEntry({ fp: 'pf-inner', layer: 'longterm', fragment_type: 'preference', kind: '偏好', text: '禁止内网直连访问', weight: 12, pinned: true })
   db.upsertEntry({ fp: 'c1', layer: 'hot/behavior', kind: '行为', text: '内网直连下载软件包', weight: 5 })
   db.upsertEntry({ fp: 'c2', layer: 'hot/behavior', kind: '行为', text: '使用镜像源下载软件包', weight: 9 })
   const es = await I.queryEntries('', 50, { mode: 'exact' })
@@ -270,7 +271,8 @@ test('冲突浮出：行为与偏好冲突标记 status 并在浏览时置顶', 
 // ============================================================================
 
 test('runDream 豁免冲突条目：不降权、不归档（浮出待用户裁决）', () => {
-  fs.writeFileSync(path.join(tmpDir, 'preferences.md'), '- [2026-08-15] 禁止内网直连访问\n', 'utf-8')
+  // 单轨（v0.6.1）：偏好经 SQLite 注入
+  db.upsertEntry({ fp: 'pf-dream', layer: 'longterm', fragment_type: 'preference', kind: '偏好', text: '禁止内网直连访问', weight: 12, pinned: true })
   db.upsertEntry({ fp: 'cf-dream', layer: 'hot/behavior', kind: '行为', text: '内网直连下载软件包', weight: 8, status: 'active' })
   const rep = I.runDream({ dryRun: false })
   const after = db.getByFp('cf-dream')
@@ -291,7 +293,8 @@ test('runDream 豁免冲突条目：不降权、不归档（浮出待用户裁�
 
 test('reflect 数据源为 SQLite：删除条目后反思不再复活（v0.5.2）', async () => {
   // 冲突条目删除后，重新反思不应再列出（旧实现扫 Markdown 备份导致复活）
-  fs.writeFileSync(path.join(tmpDir, 'preferences.md'), '- [2026-08-15] 禁止内网直连访问\n', 'utf-8')
+  // 单轨（v0.6.1）：偏好经 SQLite 注入（不再读 Markdown）
+  db.upsertEntry({ fp: 'pf-reflect', layer: 'longterm', fragment_type: 'preference', kind: '偏好', text: '禁止内网直连访问', weight: 12, pinned: true })
   db.upsertEntry({ fp: 'rf-gone', layer: 'hot/behavior', kind: '行为', text: '内网直连下载软件包', weight: 6, status: 'active' })
   const r1 = I.runReflect({ dryRun: true })
   assert.ok(r1.conflicts.some((c) => c.fp === 'rf-gone'), '反思能发现冲突')

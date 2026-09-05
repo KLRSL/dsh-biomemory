@@ -405,9 +405,7 @@ test('runReflect dry-run：返回结构化报告且不落盘', () => {
   upsertEntry({ fp: 'k1', layer: 'hot/knowledge', kind: '知识', text: '智能宠物启动成功监听 8080', weight: 10, hits: 2, created_at: '2026-08-18T10:00:00.000Z' })
   upsertEntry({ fp: 'k2', layer: 'hot/knowledge', kind: '知识', text: '项目A v1.0.0 已发布最终版', weight: 12, hits: 5, created_at: '2026-08-18T09:00:00.000Z' })
   upsertEntry({ fp: 'b1', layer: 'hot/behavior', kind: '行为', text: '智能宠物 8080 端口未监听导致启动失败', weight: 8, hits: 1, created_at: '2026-08-18T11:00:00.000Z' })
-  writeMemFile('preferences.md', [
-    '- [2026-08-15] 宠物正式名称为小海',
-  ].join('\n') + '\n')
+  upsertEntry({ fp: 'pf-rr', layer: 'longterm', fragment_type: 'preference', kind: '偏好', text: '宠物正式名称为小海', weight: 12, pinned: true })
   const r = I.runReflect({ dryRun: true })
   assert.equal(r.dryRun, true)
   assert.ok(r.scanned >= 3, '扫描到全部条目')
