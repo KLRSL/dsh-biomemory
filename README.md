@@ -295,9 +295,14 @@ memory action=audit aggregate=true groupBy=action   # 聚合统计
 ## 开发
 
 ```bash
-# 运行测试（node:test，68 个用例全绿）
+# 运行测试（node:test，69 个用例全绿）
 npm test
+
+# 发布一致性自检（版本号 / README 版本露出 / files 白名单 / lock / git 状态）
+node scripts/release-check.mjs
 ```
+
+**CI**：`.github/workflows/ci.yml` 在 Node 24 上执行「安装依赖 → 发布自检 → 单元测试 → `npm pack --dry-run`」，推送与 PR 都会触发。
 
 模块结构：`index.mjs`（接线层）+ `shared`（配置/审计/冲突）· `store`（写入/钉/删/回滚/迁移）· `retrieve`（查询/语义）· `meta`（代谢/反思）· `snapshot`（快照/会话沉淀）· `gate`（审批/自检）· `notify`（桌宠通知）· `session-state` · `db`（SQLite 数据层）· `embed`（嵌入模型）。
 
