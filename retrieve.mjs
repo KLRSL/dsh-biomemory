@@ -4,6 +4,8 @@
 // 查询与语义检索：
 //   - 纯 JS TF-IDF + cosine（降级用）
 //   - queryEntries：exact / semantic / hybrid 三模式（混合 RRF 融合在 embed.mjs）
+//     三模式统一「按相关度」排序：exact 的相关度打分与 weight 有界加成（v0.6.6，修正
+//     旧实现「命中者按 weight 排序」）、semantic 的余弦相似度、hybrid 的 RRF，均在 embed.mjs。
 //   - 命中自动巩固（用进废退）+ 浏览场景冲突置顶
 // 从 index.mjs 拆出；依赖 shared / store / db / embed。
 // ============================================================================
