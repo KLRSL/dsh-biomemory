@@ -288,9 +288,14 @@ After configuring `petEndpoint`, memory-save events are pushed to a local deskto
 ## Development
 
 ```bash
-# Run the test suite (node:test, 68 tests, all green)
+# Run the test suite (node:test, 69 tests, all green)
 npm test
+
+# Release consistency check (version / README version exposure / files whitelist / lock / git state)
+node scripts/release-check.mjs
 ```
+
+**CI**: `.github/workflows/ci.yml` runs "install deps → release check → unit tests → `npm pack --dry-run`" on Node 24 for every push and pull request.
 
 Module layout: `index.mjs` (wiring layer) + `shared` (config/audit/conflict) · `store` (write/pin/remove/restore/migration) · `retrieve` (query/semantic) · `meta` (metabolism/reflection) · `snapshot` (snapshot/session consolidation) · `gate` (approval/self-heal) · `notify` (desktop-pet notifications) · `session-state` · `db` (SQLite data layer) · `embed` (embedding model).
 
