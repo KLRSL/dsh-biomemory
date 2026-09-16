@@ -16,10 +16,21 @@ import * as db from './db.mjs'
 import * as embed from './embed.mjs'
 import {
   MEMORY_ROOT, PATHS, readFile, writeFile, appendFile, nowStamp, isoNow, tsToIso, fingerprint,
-  isImportant, detectConflict, CFG, ensureDirs, audit, dbgLog,
+  isImportant, detectConflict, CFG, ensureDirs, audit as sharedAudit, dbgLog,
 } from './shared.mjs'
 import { clearSummaryPending } from './session-state.mjs'
 import { petNotify } from './notify.mjs'
+
+// ---------- 审计出入口（v0.6.7 修复：本模块必须走 shared.audit，不能直接 db.audit） ----------
+// 背景（2026-09-17 实查）：审计是「双写」——db.audit 只写 SQLite 的 audit_log 表，
+// 而人类可读镜像 <MEMORY_ROOT>/audit.log 的追加逻辑在 shared.mjs::audit 里。
+// 本模块原先 8 处直接调 db.audit → 经 memory 工具写入/编辑/删除/钉选的记忆
+// 全都不进镜像（实查镜像里 WRITE 行止于 2026-08-19，只剩代谢类事件），
+// 与文档「SQLite audit_log 表 + 人类可读镜像」的说法不符。
+// 统一走下面的 audit()，杜绝再次分叉。
+function audit(event, data = {}) {
+  return sharedAudit(event, data)
+}
 
 // ---------- 条目解析（兼容新旧格式） ----------
 
@@ -153,7 +164,7 @@ export function migrateMarkdownToDb() {
       } catch { /* ignore */ }
     }
   }
-  db.audit('MIGRATE', { detail: { imported, from: 'markdown', to: 'sqlite' } })
+  audit('MIGRATE', { from: 'markdown', to: 'sqlite', detail: { imported } })
   db.metaSet('migrated_at', db.isoNow())
   db.metaSet('schema_version', '1')
   return { migrated: true, imported }
@@ -173,7 +184,7 @@ export async function ensureVectors() {
       if (vec) pairs.push([row.entry_id, vec])
     }
     if (pairs.length) db.setVectorsBatch(pairs)
-    db.audit('VECTORIZE', { detail: { count: pairs.length, total: missing.length } })
+    audit('VECTORIZE', { text: `向量补齐 ${pairs.length}/${missing.length}`, detail: { count: pairs.length, total: missing.length } })
     return { ok: true, embedded: pairs.length, pending: missing.length - pairs.length }
   } catch (err) {
     dbgLog(`ensureVectors failed: ${String(err && err.message || err)}`)
@@ -224,7 +235,7 @@ export function writeEntry({ track, text, sessionId, approved, mode, source }) {
     source_ref: sourceRef,
     memory_class: memoryClass,
   })
-  db.audit('WRITE', { entry_id: entryId, detail: { fp, track, approved: modeLabel, fallback: mode === 'fallback' ? true : undefined, memory_class: memoryClass, source_ref: sourceRef } })
+  audit('WRITE', { fp, text: text.trim(), entry_id: entryId, detail: { track, approved: modeLabel, fallback: mode === 'fallback' ? true : undefined, memory_class: memoryClass, source_ref: sourceRef } })
   // v0.6.1 单轨制：不再 append 到 preferences.md——SQLite 是唯一运行时数据源，
   // Markdown 仅保留为只读备份（曾因双轨导致 Markdown 新条目永不注入，见 2026-09-06 整理）
   // v0.6 会话沉淀：模型调 memory add 写入成功 → 视为"已沉淀"，清除待沉淀标记
@@ -241,7 +252,7 @@ export function setPin(fp, pinned) {
   if (!e) return { ok: false, error: `未找到 [fp:${fp}]` }
   const ok = db.setPinFp(fp, pinned, pinned ? 'memory pin' : undefined)
   if (!ok) return { ok: false, error: `未找到 [fp:${fp}]` }
-  db.audit(pinned ? 'PIN' : 'UNPIN', { entry_id: e.entry_id, detail: { fp, text: e.text } })
+  audit(pinned ? 'PIN' : 'UNPIN', { fp, text: e.text, entry_id: e.entry_id })
   return { ok: true, fp, pinned, text: e.text }
 }
 
@@ -293,7 +304,7 @@ export function removeEntry(fp) {
   if (!e) return { ok: false, error: `未找到 [fp:${fp}]` }
   const bk = db.backupDb()
   db.removeByFp(fp)
-  db.audit('REMOVE', { entry_id: e.entry_id, detail: { fp, text: e.text, backup: bk } })
+  audit('REMOVE', { fp, text: e.text, entry_id: e.entry_id, detail: { backup: bk } })
   return { ok: true, fp, layer: e.layer, text: e.text, backup: bk }
 }
 
@@ -308,7 +319,7 @@ export function restoreEntry(fp) {
     if (!e) continue
     const { entry_id, vector, ...rest } = e
     db.upsertEntry({ ...rest, status: e.status || 'active', vector: null })
-    db.audit('RESTORE', { entry_id, detail: { fp, text: e.text, from: name } })
+    audit('RESTORE', { fp, text: e.text, entry_id, detail: { from: name } })
     return { ok: true, fp, layer: e.layer, text: e.text, backup: name }
   }
   return { ok: false, error: `备份库中未找到 [fp:${fp}]（备份保留最近 ${db.MAX_BACKUPS || 7} 次）` }
@@ -337,6 +348,6 @@ export function updateEntryText(fp, text) {
   const from = e.text
   db.upsertEntry({ fp, text: trimmed })
   try { db.openDb().prepare('UPDATE entries SET vector = NULL WHERE fp = ?').run(fp) } catch { /* 向量清理失败不影响编辑 */ }
-  db.audit('UPDATE', { entry_id: e.entry_id, detail: { fp, from: from.slice(0, 80), to: trimmed.slice(0, 80) } })
+  audit('UPDATE', { fp, text: trimmed, entry_id: e.entry_id, detail: { from: from.slice(0, 80), to: trimmed.slice(0, 80) } })
   return { ok: true, fp, text: trimmed }
 }
