@@ -593,3 +593,61 @@ test('审计双写：writeEntry / updateEntryText 都要同时写 SQLite 与人�
   assert.ok(rows.some((r) => r.action === 'WRITE'), 'audit_log 表有 WRITE')
   assert.ok(rows.some((r) => r.action === 'UPDATE'), 'audit_log 表有 UPDATE')
 })
+
+// ============================================================================
+// 22. 镜像同步挂载（v0.7.0）：dream/reflect 后异步触发外部同步脚本
+//
+// 设计约束：插件**不自己写 Markdown**（单轨制），只 spawn 外部维护脚本
+// E:\DE\tools\bm-sync-mirror.cjs。本用例用环境变量把脚本替换成 fake，
+// 验证「会触发、会透传环境变量、失败不抛错」，不碰真实镜像目录。
+// ============================================================================
+
+test('scheduleMirrorSync：触发外部脚本并透传环境变量，失败不抛错', async () => {
+  const { scheduleMirrorSync } = await import('../mirror.mjs')
+  const caseDir = path.join(tmpDir, 'mirror-sync-case')
+  fs.mkdirSync(caseDir, { recursive: true })
+  const fake = path.join(caseDir, 'fake-sync.cjs')
+  const marker = path.join(caseDir, 'marker.json')
+  fs.writeFileSync(fake, `
+const fs = require('node:fs');
+fs.writeFileSync(${JSON.stringify(marker)}, JSON.stringify({
+  root: process.env.DSH_MEMORY_ROOT || null,
+  dbDir: process.env.DSH_BIOMEMORY_DIR || null,
+}), 'utf8');
+`, 'utf-8')
+
+  const prevScript = process.env.DSH_BIOMEMORY_MIRROR_SCRIPT
+  const prevOff = process.env.DSH_BIOMEMORY_MIRROR_SYNC
+  process.env.DSH_BIOMEMORY_MIRROR_SCRIPT = fake
+
+  try {
+    const r = await scheduleMirrorSync('test')
+    assert.equal(r.ok, true, '外部脚本 exit 0 → ok')
+    // 子进程 exit 与「文件已落盘」之间可能有极短延迟，轮询等待（避免偶发假失败）
+    for (let i = 0; i < 40 && !fs.existsSync(marker); i++) {
+      await new Promise((res) => setTimeout(res, 50))
+    }
+    assert.ok(fs.existsSync(marker), '外部脚本确实被拉起')
+    const seen = JSON.parse(fs.readFileSync(marker, 'utf-8'))
+    assert.equal(seen.root, tmpDir, 'DSH_MEMORY_ROOT 已透传（镜像根与库路径不能漂移）')
+    assert.equal(seen.dbDir, path.join(tmpDir, 'biomemory'), 'DSH_BIOMEMORY_DIR 已透传')
+
+    // 关闭开关：不触发
+    process.env.DSH_BIOMEMORY_MIRROR_SYNC = '0'
+    const off = await scheduleMirrorSync('test-off')
+    assert.equal(off.ok, false)
+    assert.equal(off.reason, 'disabled-by-env')
+    delete process.env.DSH_BIOMEMORY_MIRROR_SYNC
+
+    // 脚本不存在：跳过而非抛错
+    process.env.DSH_BIOMEMORY_MIRROR_SCRIPT = path.join(caseDir, 'does-not-exist.cjs')
+    const missing = await scheduleMirrorSync('test-missing')
+    assert.equal(missing.ok, false)
+    assert.equal(missing.reason, 'script-missing')
+  } finally {
+    if (prevScript === undefined) delete process.env.DSH_BIOMEMORY_MIRROR_SCRIPT
+    else process.env.DSH_BIOMEMORY_MIRROR_SCRIPT = prevScript
+    if (prevOff === undefined) delete process.env.DSH_BIOMEMORY_MIRROR_SYNC
+    else process.env.DSH_BIOMEMORY_MIRROR_SYNC = prevOff
+  }
+})
