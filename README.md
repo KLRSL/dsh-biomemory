@@ -4,7 +4,7 @@
 >
 > [简体中文](README.md) · [English](README.en.md)
 
-> **v0.6.6** · MIT License · DSH ≥ 0.1.1-rc.2（已在 0.1.2-rc.1 / 0.1.5-rc.1 实测）· Node ≥ 22.19.0
+> **v0.6.7** · MIT License · DSH ≥ 0.1.1-rc.2（已在 0.1.2-rc.1 / 0.1.5-rc.1 实测）· Node ≥ 22.19.0
 
 给 [DeepSeek Harness](https://github.com/deepseek-ai/dsh)（DSH）的跨会话记忆插件：像人脑一样**分层记、分级审、会代谢、透明可改**。数据层为 SQLite（`node:sqlite` 内置、WAL 模式、零外部依赖），旧 Markdown 记忆首次启动自动迁移并保留只读备份。
 
@@ -260,6 +260,7 @@ memory action=audit aggregate=true groupBy=action   # 聚合统计
 
 | 版本 | 日期 | 要点 |
 | --- | --- | --- |
+| **v0.6.7** | 2026-09-17 | **备份文件唯一性兜底**：`backupDb()` 的时间戳只有毫秒精度，同一毫秒内连续备份会撞名并**静默覆盖**上一份（「每次备份独立文件」用例偶发失败即此因）——现在撞名自动追加 `-2` / `-3` 序号后缀，每次备份必定独立成文件；对应用例改为紧密循环连续备份（同毫秒内 3 次也必须互不撞名且文件都存在）；75 测试全绿 |
 | **v0.6.6** | 2026-09-17 | **exact 排序语义修正**：由「按 weight 排序」改为「按相关度排序 + weight 有界加成」——`score = relevance × (1 + 0.5·min(weight, weightCap)/weightCap)`，`relevance = Σ 命中字段权重（正文 1.0 / 摘要 0.5 / 实体 0.25）+ 0.1·min(命中次数, 5) ∈ [0, 2.25]`；weight 最多把分数抬高 50%（与 hybrid 的 γ 项同构、同用 weightCap 归一），因此低 weight 但更相关的条目不再被高 weight 擦边命中者压后，用户锁定的重要记忆在同分/近似分时仍有优势；同分时按 weight 降序 → created_at 降序 → entry_id 升序收敛（全序、确定性，同输入同输出）；空查询（list/浏览）保持 weight 降序与冲突置顶不变；`queryEntries` 返回结构、命中自动巩固（hits+1）、`search`/`queryEntries` 参数与 hybrid 的 RRF 融合（只取 exact 的 rank）均不变；新增 6 个用例（75 测试全绿） |
 | **v0.6.5** | 2026-09-16 | 缺陷修复与安全加固：审批门 fail-closed（默认审批缺失/异常/非授予 → 拒绝写入并记审计，原默认 auto 会静默免审批；接受运行时全部授予词）；hybrid 融合 γ·(weight/weightCap) 归一到 RRF 同量级（原 γ·weight 淹没语义排名）；快照预算修正（偏好/锁定逐条截断 + kb/bb 保底，注入不再超 hotTokenLimit）；反思冲突判别改 kind==='行为'（新写入行为记忆此前永远进不了潜在冲突）；/memory audit 与 GET /entries 字段对齐（audit 不再输出 undefined、entries 补 hits/pinned/mode/ts/kind 且 q 分支应用 layer）；UI 主题跟随加 MutationObserver、副标题动态取数、操作失败不再静默；peerDependenciesMeta 适配预发布范围 |
 | **v0.6.4** | 2026-09-06 | **数据层单轨制**：SQLite 为唯一运行时数据源——写入一律走 memory 工具（writeEntry 不再追加 preferences.md）；偏好文本/冲突检测改从 SQLite 读（prefsText()，替代读 Markdown）；Markdown（hot/projects/longterm/preferences）永久降级为只读备份+人工查看层，不再参与运行时读写（消除「双轨不同步」盲区）；60 测试全绿 |

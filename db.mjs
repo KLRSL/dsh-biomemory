@@ -417,7 +417,11 @@ export function backupDb() {
   const dir = backupDir()
   fs.mkdirSync(dir, { recursive: true })
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19) + '-' + String(Date.now() % 1000).padStart(3, '0')
-  const target = path.join(dir, `biomemory-${stamp}.db`)
+  // 同一毫秒内连续备份会撞名（时间戳只有毫秒精度），直接 copyFile 会**静默覆盖**
+  // 上一份备份——「每次备份独立文件」是备份语义的底线，这里补序号后缀兜底。
+  const base = path.join(dir, `biomemory-${stamp}`)
+  let target = `${base}.db`
+  for (let n = 2; fs.existsSync(target); n += 1) target = `${base}-${n}.db`
   fs.copyFileSync(dbPath(), target)
   // 清理旧备份
   const backups = fs.readdirSync(dir).filter((f) => f.endsWith('.db')).sort()
