@@ -41,6 +41,7 @@ import { runDream, clusterEntries, latestReflection, runReflect } from './meta.m
 import { renderSnapshot, sessionSummarySectionText, handleSessionEvent } from './snapshot.mjs'
 import { gateWrite, selfHeal } from './gate.mjs'
 import { setPetEndpoint, getPetEndpoint, petNotify } from './notify.mjs'
+import { scheduleMirrorSync } from './mirror.mjs'
 import {
   markSummaryPending, clearSummaryPending, isSummaryPending, getSummarySid,
   getLastTurnEnd, setLastTurnEnd,
@@ -194,10 +195,13 @@ function makeMemoryTool(ctx) {
       }
       if (action === 'dream') {
         const r = runDream({ dryRun: dryRun === true, resume })
+        // 落库后异步同步人类可读镜像（dry-run 无副作用 → 不同步）
+        if (dryRun !== true) scheduleMirrorSync('tool-dream').catch(() => {})
         return { ok: true, report: { ...r, dryRun: dryRun === true } }
       }
       if (action === 'reflect') {
         const r = runReflect({ dryRun: dryRun === true })
+        if (dryRun !== true) scheduleMirrorSync('tool-reflect').catch(() => {})
         return { ok: true, report: { ...r, dryRun: dryRun === true } }
       }
       if (action === 'audit') {
@@ -330,6 +334,7 @@ function registerMemoryCommand(ctx) {
         if (verb === 'dream') {
           const dryRun = rest.includes('--dry-run')
           const r = runDream({ dryRun })
+          if (!dryRun) scheduleMirrorSync('cmd-dream').catch(() => {})
           const head = `${dryRun ? '【预览】' : ''}扫描 ${r.scanned} 条：衰减 ${r.decayed} · 巩固 ${r.consolidated} · 冲突 ${r.conflicted} · 归档 ${r.archived}`
           const detail = r.items.slice(0, 20).map((it) => `- ${it.op} [${it.layer}] [fp:${it.fp}]${it.to !== undefined ? ` → ${it.to}` : ''}`).join('\n')
           return { kind: 'success', text: detail ? `${head}\n备份：${r.backup}\n${detail}` : `${head}\n备份：${r.backup}` }
@@ -406,6 +411,7 @@ export function apply(ctx, config = {}) {
       if (!lb || Date.now() - fs.statSync(lb).mtimeMs >= CFG.autoDreamDays * 86400000) {
         const r = runDream()
         audit('AUTO-DREAM', { scanned: r.scanned, decayed: r.decayed, archived: r.archived })
+        scheduleMirrorSync('auto-dream').catch(() => {})
         dbgLog(`auto dream: scanned=${r.scanned}`)
       }
     }
@@ -508,11 +514,13 @@ export function apply(ctx, config = {}) {
           if (req.method === 'POST' && p === '/dream') {
             const dry = (await readBodyJson(req)).dryRun === true
             const r = runDream({ dryRun: dry })
+            if (!dry) scheduleMirrorSync('web-dream').catch(() => {})
             return send(200, { ok: true, report: { ...r, dryRun: dry } })
           }
           if (req.method === 'POST' && p === '/reflect') {
             const dry = (await readBodyJson(req)).dryRun === true
             const r = runReflect({ dryRun: dry })
+            if (!dry) scheduleMirrorSync('web-reflect').catch(() => {})
             return send(200, { ok: true, report: { ...r, dryRun: dry } })
           }
           if (req.method === 'GET' && p === '/entries') {
