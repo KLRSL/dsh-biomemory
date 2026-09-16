@@ -12,7 +12,7 @@
 
 import * as db from './db.mjs'
 import * as embed from './embed.mjs'
-import { PATHS, CFG, dbgLog, prefsText } from './shared.mjs'
+import { PATHS, CFG, dbgLog, prefsText, audit } from './shared.mjs'
 import { entryStatus, consolidateHits } from './store.mjs'
 
 // ---------- 纯 JS TF-IDF + cosine（无外部依赖，语义检索降级） ----------
@@ -133,7 +133,7 @@ export async function queryEntries(query, limit = CFG.maxQueryResults, opts = {}
   // 用进废退：带关键词的真实召回才巩固（list 浏览不计）
   if (ql && hitFps.size) {
     const files = consolidateHits(hitFps)
-    if (files) db.audit('RECALL', { detail: { count: hitFps.size, files } })
+    if (files) audit('RECALL', { detail: { count: hitFps.size, files } })
   }
   // 浏览场景（无关键词，无相关性可言）：与偏好冲突的行为记忆置顶（冲突浮出，供用户裁决）
   if (!ql) {

@@ -557,3 +557,39 @@ test('renderSnapshot：prefs 超大时被逐条截断，且 kb 仍保留内容�
   // 截断标记可见，便于人工排查
   assert.ok(text.includes('预算已满'), '应给出截断标记')
 })
+
+// ============================================================================
+// 21. 审计双写：人类可读镜像必须跟着写入（v0.6.8 修复）
+//
+// 回归背景（2026-09-17 实查）：store.mjs 原先 8 处、retrieve.mjs 1 处直接调
+// db.audit（只写 SQLite audit_log 表），而镜像 <MEMORY_ROOT>/audit.log 的追加
+// 逻辑在 shared.mjs::audit 里 → 经 memory 工具写入/编辑/删除的记忆全都不进镜像
+// （实查镜像里 WRITE 行止于 2026-08-19，只剩 DECAY/CONSOLIDATE 等代谢事件），
+// 与文档「SQLite audit_log 表 + 人类可读镜像」不符。本用例锁死该行为。
+// ============================================================================
+
+test('审计双写：writeEntry / updateEntryText 都要同时写 SQLite 与人类可读镜像', async () => {
+  const { writeEntry, updateEntryText } = await import('../store.mjs')
+  const mirror = path.join(tmpDir, 'audit.log')
+  // 清掉前序用例可能留下的镜像行，保证断言针对本次写入
+  fs.rmSync(mirror, { force: true })
+
+  const w = writeEntry({ track: 'agent', text: '审计双写回归：这条写入必须同时出现在镜像里' })
+  assert.ok(w && w.ok, 'writeEntry 成功')
+
+  let text = fs.readFileSync(mirror, 'utf-8')
+  assert.ok(text.includes(`WRITE ${w.fp}`), `镜像里应有 WRITE ${w.fp}（实际：${text.slice(0, 200)}）`)
+  assert.ok(/^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\] WRITE /m.test(text), '镜像行格式应为 [时间] ACTION fp 摘要')
+
+  const u = updateEntryText(w.fp, '审计双写回归：编辑后也必须补一行 UPDATE 到镜像')
+  assert.ok(u && u.ok, 'updateEntryText 成功')
+  text = fs.readFileSync(mirror, 'utf-8')
+  assert.ok(text.includes(`UPDATE ${w.fp}`), '编辑也应写镜像 UPDATE 行')
+  assert.ok(text.includes('编辑后也必须补一行'), '镜像行带上新文本摘要')
+
+  // SQLite 侧同样留痕（双写而非只写其一）
+  const db = await import('../db.mjs')
+  const rows = db.queryAudit({ limit: 50 })
+  assert.ok(rows.some((r) => r.action === 'WRITE'), 'audit_log 表有 WRITE')
+  assert.ok(rows.some((r) => r.action === 'UPDATE'), 'audit_log 表有 UPDATE')
+})
