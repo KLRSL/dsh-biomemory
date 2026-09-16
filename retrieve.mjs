@@ -83,10 +83,12 @@ export async function queryEntries(query, limit = CFG.maxQueryResults, opts = {}
   const minWeight = opts.minWeight ?? 0.1
   const fragmentTypes = Array.isArray(opts.fragmentTypes) && opts.fragmentTypes.length ? new Set(opts.fragmentTypes) : null
   const includeArchived = opts.includeArchived === true
+  const layer = opts.layer || undefined
   const prefsTextStr = prefsText()
 
   const ql = (query || '').toLowerCase()
   let entries = db.allEntries({ includeArchived })
+  if (layer) entries = entries.filter((e) => e.layer === layer)
   if (projectId) entries = entries.filter((e) => e.project_id === projectId)
   if (fragmentTypes) entries = entries.filter((e) => fragmentTypes.has(e.fragment_type))
 
@@ -113,7 +115,7 @@ export async function queryEntries(query, limit = CFG.maxQueryResults, opts = {}
     const e = r.entry
     if (!e) continue
     const isSem = mode !== 'exact' && !kwHits.has(e.fp)
-    out.push({ layer: e.layer, fp: e.fp, text: e.text, weight: e.weight, semantic: isSem, score: r.score, fragment_type: e.fragment_type, memory_class: e.memory_class, source_ref: e.source_ref, created_at: e.created_at, status: entryStatus(e, prefsTextStr) })
+    out.push({ layer: e.layer, fp: e.fp, text: e.text, weight: e.weight, semantic: isSem, score: r.score, fragment_type: e.fragment_type, memory_class: e.memory_class, source_ref: e.source_ref, created_at: e.created_at, status: entryStatus(e, prefsTextStr), kind: e.kind, mode: e.mode, hits: e.hits, pinned: !!e.pinned, ts: e.created_at })
     if (ql) hitFps.add(e.fp)
   }
   // 精确关键词命中未进 top-N 的也补入（保底不丢）
@@ -121,7 +123,7 @@ export async function queryEntries(query, limit = CFG.maxQueryResults, opts = {}
     const inOut = new Set(out.map((o) => o.fp))
     for (const e of entries) {
       if (kwHits.has(e.fp) && !inOut.has(e.fp) && out.length < limit) {
-        out.push({ layer: e.layer, fp: e.fp, text: e.text, weight: e.weight, semantic: false, memory_class: e.memory_class, source_ref: e.source_ref, status: entryStatus(e, prefsTextStr) })
+        out.push({ layer: e.layer, fp: e.fp, text: e.text, weight: e.weight, semantic: false, memory_class: e.memory_class, source_ref: e.source_ref, status: entryStatus(e, prefsTextStr), fragment_type: e.fragment_type, kind: e.kind, mode: e.mode, hits: e.hits, pinned: !!e.pinned, ts: e.created_at, created_at: e.created_at })
         inOut.add(e.fp)
       }
     }

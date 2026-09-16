@@ -16,8 +16,48 @@ import {
 
 // ---------- 冻结快照（会话启动注入 system prompt；注册即冻结） ----------
 
+// 截断标记（保留偏好/锁定的可见性：被裁掉的内容以一行细说明代替）
+const CUT_MARK = '（…预算已满，其余条目本条快照内省略）'
+
+// 逐条（按行）截断文本到 token 上限：保留标题与尽可能多的完整行；
+// 剩余空间不足以容纳首行时按字符瘦身（保证不超预算）。空结果 = 该段完全放不下。
+function trimTextToTokens(text, maxTokens, title = null) {
+  const limit = Math.max(0, Number(maxTokens) || 0)
+  if (!text) return ''
+  const lines = String(text).split('\n').filter((l) => l.trim() !== '')
+  if (!lines.length) return ''
+  const head = title !== null ? title : (lines[0].startsWith('## ') ? lines[0] : null)
+  const body = head !== null ? lines.slice(1) : lines
+  const reserve = estimateTokens(CUT_MARK)
+  const kept = []
+  let used = estimateTokens(head ? head + '\n' : '')
+  let cut = false
+  for (const line of body) {
+    const t = estimateTokens(line + '\n')
+    if (used + t + reserve > limit) { cut = true; break }
+    kept.push(line)
+    used += t
+  }
+  if (!kept.length && body.length) {
+    const room = limit - used - reserve
+    if (room <= 4) return ''
+    const first = body[0]
+    let take = Math.floor(first.length * room / Math.max(1, estimateTokens(first)) * 0.9)
+    while (take > 8 && estimateTokens(first.slice(0, take)) > room) take = Math.floor(take * 0.8)
+    if (take <= 8) return ''
+    kept.push(first.slice(0, take).trimEnd() + ' …')
+    cut = true
+  } else if (kept.length < body.length) {
+    cut = true
+  }
+  const out = []
+  if (head) out.push(head)
+  out.push(...kept)
+  if (cut) out.push(CUT_MARK)
+  return out.join('\n')
+}
+
 export function renderSnapshot() {
-  db.openDb()
   const prefs = db.listEntries({ fragmentType: 'preference', status: 'active', limit: 200 })
     .map((e) => `- [${e.created_at ? String(e.created_at).slice(0, 10) : ''}]${e.memory_class ? `[${e.memory_class}]` : ''} ${e.text}`)
     .join('\n')
@@ -34,16 +74,53 @@ export function renderSnapshot() {
   const rank = (a, b) => (b.weight - a.weight) || (String(b.created_at || '').localeCompare(String(a.created_at || '')))
   const fmt = (e) => `- [${e.layer}]${e.memory_class ? `[${e.memory_class}]` : ''} ${e.text}`
   const prefsTextStr = prefsText()
-  const parts = []
-  if (prefs) parts.push('## 用户偏好（最高优先级，写入须尊重）\n' + prefs)
+  const HEADER = `# 记忆快照（dsh-biomemory，会话冻结）\n\n> 本快照 = Applied Context（已注入 prompt 供参考）。Memory（存储层）与 Retrieved（查询候选）不在此列；检索到 ≠ 已采用，执行与否以模型结合上下文的判断为准。\n\n`
+  // v0.6.5 预算修正（旧实现只扣 header+prefs+pinned 且两段自身不截断）：
+  //   ① 偏好/锁定按各自内容占比分配预算并「逐条」截断（去掉整行，必要时单行瘦身）；
+  //   ② 先给 kb/bb 预留保底下限（KB_FLOOR），避免 budget 变负导致知识/行为整段丢失；
+  //   ③ 末尾兜底按 尾巴优先 继续裁剪，保证 estimateTokens(text) ≤ hotTokenLimit。
+  // 预算分配（按内容自身 token 估算，避免位置索引错位）
+  const KB_FLOOR = Math.max(300, Math.floor(CFG.hotTokenLimit * 0.25))
+  const headerTokens = estimateTokens(HEADER)
+  const budget = Math.max(0, CFG.hotTokenLimit - headerTokens)
+  const softBudget = Math.max(0, budget - KB_FLOOR)
+  const prefsNeed = prefs !== '' ? estimateTokens(prefs) : 0
+  const pinnedNeed = pinned.length ? estimateTokens(pinned.join('\n')) : 0
+  const headTokens = Math.min(softBudget, prefsNeed + pinnedNeed)
+  // 补算：偏好/锁定 + 空标题占用之后还剩多少 → 作为 kb/bb 的实际预算（下限 KB_MIN，保证有内容）
+  const KB_MIN = 220
+  const kbBudget = Math.max(KB_MIN, budget - headTokens - 60)
+  const totalHead = prefsNeed + pinnedNeed
+  // 偏好至多占软预算的 90%，其余留给 kb/bb（避免偏好独吞导致知识/行为段只剩标题）
+  const prefsCap = Math.floor(softBudget * 0.9)
+  const prefsSoft = totalHead > 0
+    ? Math.min(prefsCap, Math.max(pinnedNeed > 0 ? softBudget - pinnedNeed : softBudget, Math.floor(softBudget * prefsNeed / totalHead)))
+    : 0
+  const pinnedSoft = Math.max(0, softBudget - prefsSoft)
+  const head = []
+  if (prefs !== '') head.push(trimTextToTokens('## 用户偏好（最高优先级，写入须尊重）\n' + prefs, prefsSoft, '## 用户偏好（最高优先级，写入须尊重）'))
   if (pinned.length) {
-    parts.push(
+    head.push(trimTextToTokens(
       '## 锁定记忆（最高优先级，不参与衰减）\n' +
       '> 说明：锁定 = 不遗忘（防衰减/归档），不代表每轮必须执行。与当前任务无关时按 relevance admission 忽略；' +
-      '与用户明确偏好冲突时以用户最新明确决定为准。\n' + pinned.join('\n')
-    )
+      '与用户明确偏好冲突时以用户最新明确决定为准。\n' + pinned.join('\n'),
+      pinnedSoft,
+      // title 只能是第一行（正文含 '> 说明' 行，若整体当标题会让正文为空 → 该段被整段丢弃）
+      '## 锁定记忆（最高优先级，不参与衰减）',
+    ))
   }
-  if (kb.length) parts.push('## 近期知识记忆\n' + kb.sort(rank).map(fmt).join('\n'))
+  // kb/bb 各自按剩余预算（下限 KB_MIN）截断——保证「偏好写爆也不吞掉知识/行为段」
+  const rest = []
+  if (kb.length) {
+    // 排序：真·知识条目优先于「偏好类」条目（偏好已有专门段落，避免重复占用知识段预算
+    // 把知识点挤掉），同类内按 weight/新近排序；再按剩余预算逐条截断（保底下限 KB_MIN）
+    const kbSorted = [...kb].sort((a, b) => {
+      const ka = a.kind === '知识' ? 0 : 1
+      const kbb = b.kind === '知识' ? 0 : 1
+      return (ka - kbb) || rank(a, b)
+    })
+    rest.push(trimTextToTokens('## 近期知识记忆\n' + kbSorted.map(fmt).join('\n'), kbBudget, '## 近期知识记忆'))
+  }
   if (bb.length) {
     // 与偏好冲突的行为记忆置顶并标注（冲突浮出，会话内即可发现）
     const bbSorted = [...bb].sort((a, b) => {
@@ -51,23 +128,31 @@ export function renderSnapshot() {
       const cb = b.kind === '行为' && detectConflict(b, prefsTextStr) ? 1 : 0
       return (cb - ca) || rank(a, b)
     })
-    parts.push('## 近期行为记忆\n' + bbSorted.map((e) => `- [${e.layer}]${e.memory_class ? `[${e.memory_class}]` : ''}${e.kind === '行为' && detectConflict(e, prefsTextStr) ? ' [冲突]' : ''} ${e.text}`).join('\n'))
+    rest.push(trimTextToTokens('## 近期行为记忆\n' + bbSorted.map((e) => `- [${e.layer}]${e.memory_class ? `[${e.memory_class}]` : ''}${e.kind === '行为' && detectConflict(e, prefsTextStr) ? ' [冲突]' : ''} ${e.text}`).join('\n'), kbBudget, '## 近期行为记忆'))
   }
-  if (!parts.length) return ''
-  const HEADER = `# 记忆快照（dsh-biomemory，会话冻结）\n\n> 本快照 = Applied Context（已注入 prompt 供参考）。Memory（存储层）与 Retrieved（查询候选）不在此列；检索到 ≠ 已采用，执行与否以模型结合上下文的判断为准。\n\n`
-  let text = HEADER + parts.join('\n\n')
-  // 热区 token 硬限制：超出部分截断（保留偏好与锁定）
-  if (estimateTokens(text) > CFG.hotTokenLimit) {
-    let budget = CFG.hotTokenLimit - estimateTokens(HEADER + parts[0] + '\n\n' + (parts[1] || ''))
-    const keep = [parts[0]]
-    if (parts[1]) keep.push(parts[1])
-    for (const p of parts.slice(2)) {
-      const t = estimateTokens(p)
-      if (t <= budget) { keep.push(p); budget -= t }
+  const keep = [...head, ...rest].filter((p) => p !== '')
+  if (!keep.length) return ''
+  let text = HEADER + keep.join('\n\n')
+  // 兜底：仍超限则从尾部（行为记忆 → 知识记忆 → 锁定 → 偏好）继续裁剪，保证硬上限
+  let guard = 0
+  while (estimateTokens(text) > CFG.hotTokenLimit && keep.filter(Boolean).length && guard++ < 12) {
+    let idx = -1
+    for (let i = keep.length - 1; i >= 0; i--) {
+      if (keep[i]) { idx = i; break }
     }
-    text = HEADER + keep.join('\n\n')
+    if (idx < 0) break
+    const overflow = estimateTokens(text) - CFG.hotTokenLimit
+    if (keep[idx].includes(CUT_MARK)) {
+      // 已裁到极限仍超限：整段丢弃（先丢尾部的 kb/bb，再丢锁定，最后才丢偏好）
+      keep.splice(idx, 1)
+    } else {
+      const target = Math.max(0, estimateTokens(keep[idx]) - overflow - 40)
+      keep[idx] = trimTextToTokens(keep[idx], target)
+      if (!keep[idx]) keep.splice(idx, 1)
+    }
+    text = HEADER + keep.filter(Boolean).join('\n\n')
   }
-  return text
+  return estimateTokens(text) > CFG.hotTokenLimit ? HEADER : text
 }
 
 // ---------- 会话结束自动沉淀（v0.6） ----------

@@ -4,7 +4,7 @@
 >
 > [简体中文](README.md) · [English](README.en.md)
 
-> **v0.6.4** · MIT License · DSH ≥ 0.1.1-rc.2 (verified on 0.1.2-rc.1) · Node ≥ 22.19.0
+> **v0.6.5** · MIT License · DSH ≥ 0.1.1-rc.2 (verified on 0.1.2-rc.1 and 0.1.5-rc.1) · Node ≥ 22.19.0
 
 A cross-session memory plugin for [DeepSeek Harness](https://github.com/deepseek-ai/dsh) (DSH) that works like a human brain: **layered recall, graded review, memory metabolism, fully transparent and editable**. The data layer is SQLite (built-in `node:sqlite`, WAL mode, zero external dependencies); legacy Markdown memories are migrated automatically on first start and kept as a read-only backup.
 
@@ -250,8 +250,9 @@ After configuring `petEndpoint`, memory-save events are pushed to a local deskto
 ## Compatibility
 
 - **Node ≥ 22.19.0** (requires built-in `node:sqlite`).
-- **Runtime**: `@deepseek-ai/dsh-*` ≥ 0.1.1-rc.2 (current latest line; verified on 0.1.2-rc.1, implemented against actual lib sources).
+- **Runtime**: `@deepseek-ai/dsh-*` ≥ 0.1.1-rc.2 (current latest line; verified on 0.1.2-rc.1 and 0.1.5-rc.1, implemented against actual lib sources).
 - **peerDependencies**: `@deepseek-ai/cordis ^4.0.2`, `@deepseek-ai/dsh-session >= 0.1.1-rc.2`, `@deepseek-ai/dsh-tools >= 0.1.1-rc.2`.
+- **Prerelease versions are not covered by that semver range**: per semver prerelease rules, node-semver `satisfies` returns **false** for `>=0.1.1-rc.2` against 0.1.5-rc.1. Both packages are always provided by the host runtime, so the range is kept for reference and both are marked `optional: true` in `peerDependenciesMeta` (never blocks loading). **Verified working on 0.1.5-rc.1.**
 - **Zero native npm dependencies**: the data layer is built-in `node:sqlite` plus pure JS, so it cannot clash with other plugins' native modules; the embedding model is an optional offline component that degrades gracefully when missing.
 - Since v0.6.3, memory tool return values are compatible with dsh-tools' new strict lossless JSON validation (undefined/NaN fields are normalized to null, fixing tool validation errors).
 
@@ -259,6 +260,7 @@ After configuring `petEndpoint`, memory-save events are pushed to a local deskto
 
 | Version | Date | Highlights |
 | --- | --- | --- |
+| **v0.6.5** | 2026-09-16 | Defect fixes and hardening: approval gate is fail-closed by default (missing service / thrown request / non-grant outcome denies the write and audits it — the old `auto` default silently skipped approval; all runtime grant words accepted); hybrid fusion now uses γ·(weight/weightCap) so weight sits in the same magnitude as the RRF terms (the raw γ·weight buried semantic ranking); snapshot budget fixed (preferences/pinned truncated line-by-line plus a kb/bb floor, so injection never exceeds hotTokenLimit); reflection conflict detection switched to kind === '行为' (newly written behavior memories previously never surfaced as conflicts); /memory audit and GET /entries aligned with real fields (no more undefined output; entries expose hits/pinned/mode/ts/kind and apply the layer filter in the q branch); UI theme following now uses MutationObserver, subtitle reads live counts, and failed operations are no longer silent; peerDependenciesMeta added for prerelease range compatibility |
 | **v0.6.4** | 2026-09-06 | Single-source-of-truth finalized: SQLite (`~/.dsh/biomemory/biomemory.db`) is the only data layer — writes no longer append local Markdown; conflict detection reads preferences from SQLite; snapshot / retrieve / meta / index all synchronized; 60 tests green. Local Markdown docs demoted to read-only backup + manual review, no longer involved in runtime read/write |
 | **v0.6.3** | 2026-09-05 | Adapted to DSH 0.1.2-rc.1: memory tool return values compatible with the new dsh-tools lossless JSON validation (undefined/NaN fields normalized to null, fixing tool errors); plugin UI dark-mode adaptation (DSH-theme following, dual-channel detection + MutationObserver) |
 | **v0.6.2** | 2026-09-05 | Admin UI rebuilt on the "skeleton/flesh/breath" design language: modern minimalism — neutralSurface base with white rounded cards, primary-underline tabs, 4/8px grid, 150ms restrained motion; colors taken entirely from dsh-fuse design tokens, zero hardcoded values; purple-pink brand color established (memory neurons) |
@@ -273,8 +275,10 @@ After configuring `petEndpoint`, memory-save events are pushed to a local deskto
 ## FAQ
 
 - **Node version**: Node ≥ 22.19.0 is required (built-in `node:sqlite`); older versions may fail to load the plugin.
-- **DSH runtime compatibility**: targets `@deepseek-ai/dsh-*` ≥ 0.1.1-rc.2 — verify the runtime version you actually run (0.1.2-rc.1 verified).
+- **DSH runtime compatibility**: targets `@deepseek-ai/dsh-*` ≥ 0.1.1-rc.2 — verify the runtime version you actually run (0.1.2-rc.1 and 0.1.5-rc.1 verified). Note the semver prerelease rule: `>=0.1.1-rc.2` does not `satisfies` 0.1.5-rc.1, but both packages come from the host, so loading is unaffected (see Compatibility).
 - **Tool errors (Invalid object / lossless JSON)**: upgrade to v0.6.3+ — return values are now compatible with the new strict validation.
+- **Important memories are refused / not saved**: since v0.6.5 the approval gate is fail-closed — a missing approval service, a throwing `approval.request`, or any non-grant outcome (rejected/cancelled/unavailable) denies the write and logs an `APPROVAL-UNAVAILABLE` audit entry. To keep the old auto-save behavior, set `approvalFallback: "auto"` explicitly in the settings page or `biomemory.config.json`.
+- **undefined in audit / entry lists**: fixed in v0.6.5 (`/memory audit` now maps `action/entry_id/detail`; `GET /entries` exposes `hits/pinned/mode/ts/kind` and applies the layer filter when `q` is present).
 - **Semantic retrieval unavailable**: check that the model exists at `~/.dsh/models/bge-small-zh-v1.5`; when missing, retrieval degrades to keyword + TF-IDF and memory features keep working.
 - **Write failures**: check read/write permissions for `~/.dsh/biomemory/` (and `DSH_BIOMEMORY_DIR`); if approval is rejected, check the approval policy and `approvalFallback`.
 - **Where did my legacy Markdown memories go?**: they were migrated into SQLite automatically on first start; `~/.dsh/memory/` remains as a read-only backup and is not deleted.
@@ -284,7 +288,7 @@ After configuring `petEndpoint`, memory-save events are pushed to a local deskto
 ## Development
 
 ```bash
-# Run the test suite (node:test, 60 tests, all green)
+# Run the test suite (node:test, 68 tests, all green)
 npm test
 ```
 

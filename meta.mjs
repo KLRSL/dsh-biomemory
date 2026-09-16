@@ -165,7 +165,10 @@ export function runReflect(opts = {}) {
   const live = entries.filter((e) => e.layer !== 'preferences' && !e.layer.startsWith('archive'))
   const clusters = clusterEntries(live)
   const prefsTextStr2 = prefsText()
-  const conflicts = entries.filter((e) => e.layer.startsWith('hot/behavior') && detectConflict(e, prefsTextStr2))
+  // v0.6.5 修正：writeEntry 写入层恒为 'longterm'（store.mjs），旧判别
+  // e.layer.startsWith('hot/behavior') 只对迁移期条目成立 → v0.6 之后新写的行为记忆
+  // 永远进不了「潜在冲突」。改判 kind === '行为'（与 runDream 的冲突判定一致）。
+  const conflicts = entries.filter((e) => e.kind === '行为' && detectConflict(e, prefsTextStr2))
   const forget = live
     .filter((e) => !e.pinned && e.weight < CFG.decayThreshold * 1.5)
     .sort((a, b) => a.weight - b.weight)

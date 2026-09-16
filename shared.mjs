@@ -30,7 +30,7 @@ export const DEFAULTS = {
   weightCap: 20,          // 巩固权重上限（防膨胀）
   hotTokenLimit: 5000,    // 快照注入热区 token 上限
   maxQueryResults: 20,    // 查询返回上限
-  approvalFallback: 'auto', // 审批不可用（策略 never/服务缺失）时：auto=自动保存并审计 / deny=拒绝写入
+  approvalFallback: 'deny', // v0.6.5 起默认 deny（fail-closed）：审批服务缺失/请求异常/非授予结果 → 拒绝写入并记审计；auto=自动保存并审计（旧行为，需显式设置）
   autoDreamDays: 7,       // 启动时距上次代谢 ≥ 此天数 → 自动执行（0=关闭）
   autoReflectDays: 3,     // 启动时距上次反思 ≥ 此天数 → 自动执行（0=关闭）
   conflictOverlap: 3,     // 冲突仲裁：行为与单条偏好的专有双字重叠阈值（P0-003 二次验证）

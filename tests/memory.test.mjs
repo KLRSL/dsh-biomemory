@@ -242,6 +242,27 @@ test('detectConflict（v0.5 P0-003 修正）：真矛盾触发，教训语境/�
   assert.equal(I.detectConflict(realConflict, ''), false)
 })
 
+test('新写入的行为记忆（layer=longterm）能与偏好冲突浮出（v0.6.5）', async () => {
+  const db = await import('../db.mjs')
+  const { writeEntry } = await import('../store.mjs')
+  // 偏好：直接决定冲突判据（detectConflict 的基准来自 SQLite 活跃偏好条目）
+  db.upsertEntry({ fp: 'conf-pref-1', layer: 'longterm', fragment_type: 'preference', kind: '偏好', text: '桌面不放图标，程序固定到开始菜单', weight: 12, pinned: true })
+  db.upsertEntry({ fp: 'conf-pref-2', layer: 'longterm', fragment_type: 'preference', kind: '偏好', text: '网络下载一律用国内镜像源', weight: 12, pinned: true })
+  // v0.6 之后的新写入路径：writeEntry 的 layer 恒为 'longterm'（旧判别只看 layer 前缀 → 永不冲突）
+  const r = writeEntry({ track: 'agent', text: '这次把应用图标直接放到了桌面上，没进开始菜单' })
+  assert.ok(r.ok && r.fp, '新行为记忆写入成功')
+  const e = db.getByFp(r.fp)
+  assert.equal(e.layer, 'longterm', '新写入层恒为 longterm（正是旧判别失效的原因）')
+  assert.equal(e.kind, '行为', '新写入行为记忆 kind=行为')
+  // ① 反思「潜在冲突」必须列出它
+  const rep = I.runReflect({ dryRun: true })
+  assert.ok(rep.conflicts.some((c) => c.fp === r.fp), `新行为记忆应进入潜在冲突（实际 ${JSON.stringify(rep.conflicts.map((c) => c.fp))}）`)
+  // ② dream 冲突豁免（浮出待裁决，不降权不归档）
+  const d = I.runDream({ dryRun: true })
+  assert.ok(d.items.some((it) => it.op === 'CONFLICT' && it.fp === r.fp), 'dream 应记录 CONFLICT')
+  assert.equal(db.getByFp(r.fp).weight, 10, '冲突条目不降权')
+})
+
 // ============================================================================
 // 9. runDream dry-run（v0.5：SQLite 数据层）
 // ============================================================================
@@ -506,4 +527,33 @@ test('db schema：source_ref / memory_class 列存在并可查询', async () => 
   const cols = db.openDb().prepare("PRAGMA table_info(entries)").all().map((c) => c.name)
   assert.ok(cols.includes('source_ref'))
   assert.ok(cols.includes('memory_class'))
+})
+
+// ============================================================================
+// 20. 快照注入预算硬上限（v0.6.5：prefs/pinned 逐条截断 + kb 保底）
+// ============================================================================
+
+test('renderSnapshot：prefs 超大时被逐条截断，且 kb 仍保留内容、总量不超 hotTokenLimit', async () => {
+  const db = await import('../db.mjs')
+  const cfg = I.getConfig()
+  const limit = cfg.hotTokenLimit
+  // 40 条超长偏好（每条 400 中文 ≈400 token → 合计 ≈16k token，远超 5000）
+  for (let i = 0; i < 40; i++) {
+    db.upsertEntry({ fp: `snap-p${i}`, layer: 'longterm', fragment_type: 'preference', kind: '偏好', text: `偏好条目不重复内容编号${i} ` + '甲'.repeat(380) })
+  }
+  // 一条知识点（必须仍能进快照：旧实现 budget 变负导致 kb 整段丢弃）
+  db.upsertEntry({ fp: 'snap-k1', layer: 'longterm', fragment_type: 'fact', kind: '知识', text: '知识保底条目：预算截断后仍应注入' })
+  const { renderSnapshot } = await import('../snapshot.mjs')
+  const text = renderSnapshot()
+  const tokens = I.estimateTokens(text)
+  assert.ok(tokens <= limit, `注入总量必须 ≤ hotTokenLimit（${tokens} ≤ ${limit}）`)
+  assert.ok(text.includes('## 用户偏好'), '偏好段保留')
+  assert.ok(text.includes('## 近期知识记忆'), '知识段保留（预算保底，不被整段丢弃）')
+  assert.ok(text.includes('知识保底条目'), '知识条目内容在快照内')
+  // 偏好被逐条截断：40 条 → 只剩预算内的若干条（旧实现 prefs 整段不截断 → 全量注入）
+  const prefLines = text.split('## 近期知识记忆')[0].split('\n').filter((l) => l.startsWith('- ['))
+  assert.ok(prefLines.length > 0, '至少保留一条偏好')
+  assert.ok(prefLines.length < 40, `超预算的偏好条目应被逐条截断（实际保留 ${prefLines.length}/40）`)
+  // 截断标记可见，便于人工排查
+  assert.ok(text.includes('预算已满'), '应给出截断标记')
 })
