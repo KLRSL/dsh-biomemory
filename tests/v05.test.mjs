@@ -209,6 +209,11 @@ test('backupDb：创建 .db 副本并保留最近 7 次', () => {
   assert.ok(fs.existsSync(p1), '备份文件存在')
   const p2 = db.backupDb()
   assert.notEqual(p1, p2, '每次备份独立文件')
+  // 紧密循环里的备份可能落在同一毫秒（时间戳只有毫秒精度）：必须仍然各自独立成文件，
+  // 否则后一次会静默覆盖前一次（v0.6.7 修）
+  const tight = [db.backupDb(), db.backupDb(), db.backupDb()]
+  assert.equal(new Set(tight).size, tight.length, '同一毫秒内的备份也不得撞名')
+  for (const p of [p1, p2, ...tight]) assert.ok(fs.existsSync(p), `备份文件存在：${p}`)
   const backups = db.listBackups()
   assert.ok(backups.length >= 2, '备份列表 ≥2')
   assert.ok(backups.length <= 7, '不超过 7 次')
