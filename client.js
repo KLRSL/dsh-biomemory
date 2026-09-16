@@ -20,7 +20,7 @@ window.__ModuleLoader__.load({
 			"zh-CN": {
 				tab: "记忆",
 				title: "记忆工作台",
-				subtitle: "数字海马体 · 151 条记忆 · 语义检索已就绪",
+				subtitle: "数字海马体 · {total} 条记忆 · 语义检索已就绪",
 				tabOverview: "概览",
 				tabKnowledge: "知识库",
 				tabMetabolism: "代谢",
@@ -81,9 +81,9 @@ window.__ModuleLoader__.load({
 				maxQueryResults: "查询上限",
 				maxQueryResultsHelp: "一次查询最多返回的条目数（默认 20）",
 				fallback: "审批降级策略",
-				fallbackHelp: "审批不可用（策略 never/服务缺失）时：自动保存并审计标记，或拒绝写入（默认自动）",
-				fallbackAuto: "自动保存（推荐）",
-				fallbackDeny: "拒绝写入",
+				fallbackHelp: "审批不可用（服务缺失/请求异常/策略 never）时：拒绝写入并记审计（fail-closed，默认），或自动保存并审计标记（旧行为）",
+				fallbackAuto: "自动保存",
+				fallbackDeny: "拒绝写入（推荐）",
 				autoDreamDays: "自动代谢周期（天，0=关闭）",
 				autoDreamDaysHelp: "启动时距上次代谢超过此天数自动执行 dream（默认 7）",
 				autoReflectDays: "自动反思周期（天，0=关闭）",
@@ -124,6 +124,7 @@ window.__ModuleLoader__.load({
 				previewOnly: "（预览不落盘）",
 				noClusters: "（暂无相似记忆聚类）",
 				none: "（无）",
+				opsFailed: "操作未生效，请重试（详情见日志）",
 				ops: {
 					decay: "衰减",
 					consolidate: "巩固",
@@ -140,7 +141,7 @@ window.__ModuleLoader__.load({
 			en: {
 				tab: "Memory",
 				title: "Memory Workbench",
-				subtitle: "Digital Hippocampus · 151 memories · semantic search ready",
+				subtitle: "Digital Hippocampus · {total} memories · semantic search ready",
 				tabOverview: "Overview",
 				tabKnowledge: "Knowledge",
 				tabMetabolism: "Metabolism",
@@ -201,9 +202,9 @@ window.__ModuleLoader__.load({
 				maxQueryResults: "Max results",
 				maxQueryResultsHelp: "Max entries per query (default 20)",
 				fallback: "Approval fallback",
-				fallbackHelp: "When approval unavailable: auto-save or deny (default auto)",
+				fallbackHelp: "When approval is unavailable (no service / request error / policy never): deny and audit (fail-closed, default) or auto-save and audit",
 				fallbackAuto: "Auto-save",
-				fallbackDeny: "Deny",
+				fallbackDeny: "Deny (recommended)",
 				autoDreamDays: "Auto-dream (days, 0=off)",
 				autoDreamDaysHelp: "Run dream if older (default 7)",
 				autoReflectDays: "Auto-reflect (days, 0=off)",
@@ -244,6 +245,7 @@ window.__ModuleLoader__.load({
 				previewOnly: "(preview)",
 				noClusters: "(none)",
 				none: "(none)",
+				opsFailed: "Operation did not take effect — please retry",
 				ops: {
 					decay: "decay",
 					consolidate: "consolidate",
@@ -425,22 +427,39 @@ window.__ModuleLoader__.load({
 				return () => controller.abort();
 			}, []);
 			react.useEffect(() => loadStatus(), [loadStatus]);
-			// 挂载时给 .bm-page 打上 data-dsh-theme，并监听系统主题变化实时更新（纯 JS，不动 DOM 结构）
+			// 挂载时给 .bm-page 打上 data-dsh-theme，并实时跟随主题变化：
+			// ① 系统主题（matchMedia）② DSH 运行中切换主题（data-ds-dark-theme 属性变化，MutationObserver）
 			react.useEffect(() => {
 				applyDshTheme();
-				if (typeof window.matchMedia !== "function") return void 0;
-				const mq = window.matchMedia("(prefers-color-scheme: dark)");
-				const onChange = () => applyDshTheme();
-				if (typeof mq.addEventListener === "function") {
-					mq.addEventListener("change", onChange);
-					return () => mq.removeEventListener("change", onChange);
+				const cleanups = [];
+				if (typeof window.matchMedia === "function") {
+					const mq = window.matchMedia("(prefers-color-scheme: dark)");
+					const onChange = () => applyDshTheme();
+					if (typeof mq.addEventListener === "function") {
+						mq.addEventListener("change", onChange);
+						cleanups.push(() => mq.removeEventListener("change", onChange));
+					} else if (typeof mq.addListener === "function") {
+						mq.addListener(onChange);
+						cleanups.push(() => mq.removeListener(onChange));
+					}
 				}
-				if (typeof mq.addListener === "function") {
-					mq.addListener(onChange);
-					return () => mq.removeListener(onChange);
+				if (typeof MutationObserver === "function") {
+					const obs = new MutationObserver(() => applyDshTheme());
+					try {
+						obs.observe(document.documentElement, { attributes: true, attributeFilter: ["data-ds-dark-theme"] });
+						if (document.body) obs.observe(document.body, { attributes: true, attributeFilter: ["data-ds-dark-theme"] });
+						cleanups.push(() => obs.disconnect());
+					} catch (error) {
+						/* 观察失败：保留 matchMedia 通道 */
+					}
 				}
-				return void 0;
+				return () => {
+					for (const fn of cleanups) fn();
+				};
 			});
+			// 操作失败提示（删除/编辑/锁定等）：不再静默 —— 失败时给出可见反馈
+			const [opError, setOpError] = react.useState(null);
+			const failOp = (op) => setOpError([op]);
 			const saveConfig = () => {
 				setSaveState({ kind: "saving" });
 				const body = {};
@@ -529,7 +548,7 @@ window.__ModuleLoader__.load({
 					if (!data?.ok) throw new Error(`${op} failed`);
 					if (op === "update") { setEditingFp(null); setEditingText(""); }
 					loadEntries();
-				}).catch(() => {});
+				}).catch(() => failOp(op));
 			};
 			const startEdit = (entry) => { setEditingFp(entry.fp); setEditingText(entry.text); };
 			const cancelEdit = () => { setEditingFp(null); setEditingText(""); };
@@ -557,7 +576,7 @@ window.__ModuleLoader__.load({
 					});
 					setEditingFp(null); setEditingText("");
 					loadEntries();
-				}).catch(() => {});
+				}).catch(() => failOp("update"));
 			};
 			// 反思页删除冲突条目（仅限潜在冲突列表）：先备份可回滚，删除后从列表移除
 			const removeConflict = (fp, text) => {
@@ -576,7 +595,7 @@ window.__ModuleLoader__.load({
 					setEditingFp(null); setEditingText("");
 					setLastRemoved({ fp, text: String(text || "").slice(0, 60) });
 					loadEntries();
-				}).catch(() => {});
+				}).catch(() => failOp("remove"));
 			};
 			// 撤销删除：从备份回滚单条目，加回冲突列表
 			const undoRemove = () => {
@@ -597,7 +616,7 @@ window.__ModuleLoader__.load({
 					});
 					setLastRemoved(null);
 					loadEntries();
-				}).catch(() => {});
+				}).catch(() => failOp("restore"));
 			};
 			const runReflect = (dryRun) => {
 				setReflect({ kind: "running", dryRun });
@@ -885,7 +904,7 @@ window.__ModuleLoader__.load({
 			}, t.reflectPreview)), reflectBody);
 			const tabBtn = (id, label, icon) => (0, react.createElement)("button", {
 				className: tab === id ? "bm-tab active" : "bm-tab",
-				onClick: () => setTab(id)
+				onClick: () => { setTab(id); setOpError(null); }
 			}, icon ? (0, react.createElement)(react.Fragment, null, icon, " ") : null, label);
 			const iconMap = {
 				overview: (0, react.createElement)(IconBrowseOutline16, { size: 14 }),
@@ -894,7 +913,9 @@ window.__ModuleLoader__.load({
 				reflect: (0, react.createElement)(IconThinkOutline14, { size: 14 }),
 				settings: (0, react.createElement)(IconSettingsOutline16, { size: 14 })
 			};
-			return (0, react.createElement)("div", { className: "bm-page" }, (0, react.createElement)("style", null, styles), (0, react.createElement)("div", null, (0, react.createElement)("h3", null, t.title), (0, react.createElement)("div", { className: "bm-sub" }, t.subtitle)), (0, react.createElement)("div", { className: "bm-tabs" }, tabBtn("overview", t.tabOverview, iconMap.overview), tabBtn("knowledge", t.tabKnowledge, iconMap.knowledge), tabBtn("metabolism", t.tabMetabolism, iconMap.metabolism), tabBtn("reflect", t.tabReflect, iconMap.reflect), tabBtn("settings", t.tabSettings, iconMap.settings)), tab === "overview" ? overviewSection : tab === "knowledge" ? knowledgeSection : tab === "metabolism" ? metabolismSection : tab === "reflect" ? reflectSection : settingsSection);
+			// 副标题取真实条数（v0.6.5：不再硬编码「151 条记忆」）
+			const subtitle = String(t.subtitle).replace("{total}", stats.total === void 0 ? "—" : String(stats.total));
+			return (0, react.createElement)("div", { className: "bm-page" }, (0, react.createElement)("style", null, styles), (0, react.createElement)("div", null, (0, react.createElement)("h3", null, t.title), (0, react.createElement)("div", { className: "bm-sub" }, subtitle)), opError ? (0, react.createElement)("div", { className: "bm-err" }, `${t.opsFailed}（${opError[0] || ""}）`) : null, (0, react.createElement)("div", { className: "bm-tabs" }, tabBtn("overview", t.tabOverview, iconMap.overview), tabBtn("knowledge", t.tabKnowledge, iconMap.knowledge), tabBtn("metabolism", t.tabMetabolism, iconMap.metabolism), tabBtn("reflect", t.tabReflect, iconMap.reflect), tabBtn("settings", t.tabSettings, iconMap.settings)), tab === "overview" ? overviewSection : tab === "knowledge" ? knowledgeSection : tab === "metabolism" ? metabolismSection : tab === "reflect" ? reflectSection : settingsSection);
 		}
 		function apply(ctx) {
 			ctx.effect(() => ctx.slots.inject("settings.section", () => ctx.slots.register({

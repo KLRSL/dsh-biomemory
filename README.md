@@ -4,7 +4,7 @@
 >
 > [简体中文](README.md) · [English](README.en.md)
 
-> **v0.6.4** · MIT License · DSH ≥ 0.1.1-rc.2（0.1.2-rc.1 已实测）· Node ≥ 22.19.0
+> **v0.6.5** · MIT License · DSH ≥ 0.1.1-rc.2（已在 0.1.2-rc.1 / 0.1.5-rc.1 实测）· Node ≥ 22.19.0
 
 给 [DeepSeek Harness](https://github.com/deepseek-ai/dsh)（DSH）的跨会话记忆插件：像人脑一样**分层记、分级审、会代谢、透明可改**。数据层为 SQLite（`node:sqlite` 内置、WAL 模式、零外部依赖），旧 Markdown 记忆首次启动自动迁移并保留只读备份。
 
@@ -250,8 +250,9 @@ memory action=audit aggregate=true groupBy=action   # 聚合统计
 ## 兼容性
 
 - **Node ≥ 22.19.0**（`node:sqlite` 内置要求）。
-- **运行时**：`@deepseek-ai/dsh-*` ≥ 0.1.1-rc.2（当前 latest 线；0.1.2-rc.1 已实测，按实际 lib 源码核对实现）。
+- **运行时**：`@deepseek-ai/dsh-*` ≥ 0.1.1-rc.2（当前 latest 线；0.1.2-rc.1 与 0.1.5-rc.1 均已实测，按实际 lib 源码核对实现）。
 - **peerDependencies**：`@deepseek-ai/cordis ^4.0.2`、`@deepseek-ai/dsh-session >= 0.1.1-rc.2`、`@deepseek-ai/dsh-tools >= 0.1.1-rc.2`。
+- **预发布版本号不受 semver 范围约束**：按 semver 预发布规则，范围 `>=0.1.1-rc.2` 的 node-semver `satisfies` 判定为 **false**（不接受 `0.1.5-rc.1` 这类预发布版本）。这两个包**由宿主运行时必定提供**，故范围仅作参考、已写入 `peerDependenciesMeta` 标注 `optional: true`（不因范围判定而阻断加载）。**已实测 0.1.5-rc.1 正常加载运行**。
 - **零原生 npm 依赖**：数据层为 `node:sqlite` 内置 + 纯 JS，不会与其他插件的原生模块冲突；语义检索模型为可选离线组件，缺失自动降级。
 - v0.6.3 起 memory 工具返回值兼容 dsh-tools 新版 lossless JSON 校验（undefined/NaN 字段统一置 null，避免工具校验报错）。
 
@@ -259,6 +260,7 @@ memory action=audit aggregate=true groupBy=action   # 聚合统计
 
 | 版本 | 日期 | 要点 |
 | --- | --- | --- |
+| **v0.6.5** | 2026-09-16 | 缺陷修复与安全加固：审批门 fail-closed（默认审批缺失/异常/非授予 → 拒绝写入并记审计，原默认 auto 会静默免审批；接受运行时全部授予词）；hybrid 融合 γ·(weight/weightCap) 归一到 RRF 同量级（原 γ·weight 淹没语义排名）；快照预算修正（偏好/锁定逐条截断 + kb/bb 保底，注入不再超 hotTokenLimit）；反思冲突判别改 kind==='行为'（新写入行为记忆此前永远进不了潜在冲突）；/memory audit 与 GET /entries 字段对齐（audit 不再输出 undefined、entries 补 hits/pinned/mode/ts/kind 且 q 分支应用 layer）；UI 主题跟随加 MutationObserver、副标题动态取数、操作失败不再静默；peerDependenciesMeta 适配预发布范围 |
 | **v0.6.4** | 2026-09-06 | **数据层单轨制**：SQLite 为唯一运行时数据源——写入一律走 memory 工具（writeEntry 不再追加 preferences.md）；偏好文本/冲突检测改从 SQLite 读（prefsText()，替代读 Markdown）；Markdown（hot/projects/longterm/preferences）永久降级为只读备份+人工查看层，不再参与运行时读写（消除「双轨不同步」盲区）；60 测试全绿 |
 | **v0.6.3** | 2026-09-05 | 适配 DSH 0.1.2-rc.1：memory 工具返回值兼容 dsh-tools 新版 lossless JSON 校验（undefined/NaN 字段置 null，修复工具报错）；插件 UI 深色适配（DSH 主题跟随，双通道探测 + MutationObserver） |
 | **v0.6.2** | 2026-09-05 | 管理 UI 按「骨架/血肉/呼吸」设计语言重构：现代极简——neutralSurface 底 + 白色圆角卡片分层、主色下划线 tabs、4/8px 栅格、150ms 动效；配色全部取自 dsh-fuse design 令牌，零硬编码；确立紫粉品牌色（记忆神经） |
@@ -273,8 +275,10 @@ memory action=audit aggregate=true groupBy=action   # 聚合统计
 ## 常见问题
 
 - **Node 版本**：要求 Node ≥ 22.19.0（`node:sqlite` 内置）；旧版本可能无法加载插件。
-- **DSH 运行时兼容性**：目标 `@deepseek-ai/dsh-*` ≥ 0.1.1-rc.2——请核对实际运行的运行时版本（0.1.2-rc.1 已实测）。
+- **DSH 运行时兼容性**：目标 `@deepseek-ai/dsh-*` ≥ 0.1.1-rc.2——请核对实际运行的运行时版本（0.1.2-rc.1 与 0.1.5-rc.1 均已实测）。注意 semver 预发布规则：`>=0.1.1-rc.2` 不会 `satisfies` 0.1.5-rc.1，但这两个包由宿主提供，加载不受影响（见「兼容性」）。
 - **工具报错（Invalid object / lossless JSON）**：升级到 v0.6.3+，返回值已兼容 dsh-tools 新版严格校验。
+- **重要记忆写不进/被拒**：v0.6.5 起审批门默认 fail-closed——审批服务缺失、`approval.request` 抛错或返回非授予值（rejected/cancelled/unavailable）都会拒绝写入并记 `APPROVAL-UNAVAILABLE` 审计。若想沿用旧的自动保存行为，在设置页或 `biomemory.config.json` 显式设置 `approvalFallback: "auto"`。
+- **审计/知识库列表出现 undefined**：已在 v0.6.5 修复（`/memory audit` 字段对齐 `action/entry_id/detail`；`GET /entries` 补 `hits/pinned/mode/ts/kind`，带 `q` 时也应用 layer 筛选）。
 - **语义检索不可用**：检查 `~/.dsh/models/bge-small-zh-v1.5` 模型是否存在；缺失时自动降级为关键词 + TF-IDF 检索，记忆功能不受影响。
 - **记忆写入失败**：检查 `~/.dsh/biomemory/`（及 `DSH_BIOMEMORY_DIR`）读写权限；审批被拒时确认审批策略与 `approvalFallback` 设置。
 - **旧 Markdown 记忆去哪了**：首次启动已自动迁移进 SQLite；`E:\DE\memory\` 保留为只读备份（**v0.6.4 起为纯只读层，不再写入/读取**，修改它不会影响运行时——写入一律走 memory 工具）。
@@ -291,7 +295,7 @@ memory action=audit aggregate=true groupBy=action   # 聚合统计
 ## 开发
 
 ```bash
-# 运行测试（node:test，60 个用例全绿）
+# 运行测试（node:test，68 个用例全绿）
 npm test
 ```
 

@@ -332,5 +332,92 @@ test('stats 集成：dbPath/vectors/migration 可序列化', () => {
 })
 
 // ============================================================================
+// 12. hybrid RRF 融合的 weight 归一（v0.6.5 缺陷修复）
+// ============================================================================
+
+test('hybridFuse：weight 归一到 RRF 量级——语义更相关者排在 weight 更高者之前', () => {
+  // 构造：A 语义最相关（rank 1）但 weight=1；B 只被语义排到第 2、weight=20。
+  // 旧实现 +γ·weight（γ=0.2 → 0.2~4.0）会让 B 碾压 A（RRF 单项仅 ≈0.005~0.008）。
+  const e1 = { entry_id: 'r1', fp: 'r1', text: '深色模式偏好设置', weight: 1, status: 'active', fragment_type: 'preference' }
+  const e2 = { entry_id: 'r2', fp: 'r2', text: '深色模式无关条目', weight: 20, status: 'active', fragment_type: 'fact' }
+  const all = [e1, e2]
+  const exactR = [{ entry: e1, rank: 1 }, { entry: e2, rank: 2 }]
+  const dir = new Float32Array(512); dir[0] = 1
+  const orth = new Float32Array(512); orth[1] = 1
+  const semR = [{ entry: e1, vec: dir, sim: 1, rank: 1 }, { entry: e2, vec: orth, sim: 0, rank: 2 }]
+  const res = embed.hybridFuse(exactR, semR, all, 2, { weightCap: 20 })
+  assert.equal(res[0].entry.entry_id, 'r1', `语义更相关者应第一（实际 ${res.map((r) => r.entry.entry_id)}）`)
+  const s1 = res.find((r) => r.entry.entry_id === 'r1').score
+  const s2 = res.find((r) => r.entry.entry_id === 'r2').score
+  assert.ok(s1 < 0.1 && s2 < 0.1, `总得分应停留在 RRF 量级（实际 ${s1} / ${s2}）`)
+  // 修复前：γ·weight 单独就有 0.2~4.0，已是 RRF 全量的数十倍
+  assert.ok(0.2 * 20 > 50 * (0.5 / 61), '量化对照：旧公式的 weight 项量级 ≫ RRF 单项（本用例的构造依据）')
+})
+
+test('search(hybrid)：低 weight 但语义更相关者排名更高（v0.6.5 端到端）', async () => {
+  const prevCap = I.getConfig().weightCap
+  I.setConfig({ weightCap: 20 }) // search() 用 CFG.weightCap，显式固定避免别的用例污染
+  try {
+    // 关键词只命中语义相关那条（避免 exact 的「同分按 weight 排序」干扰）；
+    // 高 weight 那条仅被语义路召回 → 旧实现下 weight 项足以反超。
+    const e1 = { entry_id: 'h1', fp: 'h1', text: '深色模式偏好设置', weight: 1, status: 'active', fragment_type: 'preference' }
+    const e2 = { entry_id: 'h2', fp: 'h2', text: '界面配色无关条目', weight: 20, status: 'active', fragment_type: 'fact' }
+    const dir = new Float32Array(512); dir[0] = 1
+    const orth = new Float32Array(512); orth[1] = 1
+    const res = await embed.search({
+      query: '深色模式',
+      mode: 'hybrid',
+      entries: [e1, e2],
+      vectorEntries: [{ entry: e1, vec: dir }, { entry: e2, vec: orth }],
+      topN: 2,
+    })
+    assert.equal(res[0].entry.entry_id, 'h1', `hybrid 应按语义/精确排名（实际 ${res.map((r) => r.entry.entry_id)}）`)
+    const s1 = res.find((r) => r.entry.entry_id === 'h1').score
+    const s2 = res.find((r) => r.entry.entry_id === 'h2').score
+    assert.ok(s1 < 0.1 && s2 < 0.1, `得分停留在 RRF 量级（实际 ${s1} / ${s2}）`)
+  } finally {
+    I.setConfig({ weightCap: prevCap })
+  }
+})
+
+// ============================================================================
+// 13. queryEntries / queryAudit 字段对齐（v0.6.5）
+// ============================================================================
+
+test('queryEntries：返回 hits/pinned/mode/ts/kind 且支持 layer 筛选（v0.6.5）', async () => {
+  db.upsertEntry({ fp: 'qa-hit', layer: 'hot/behavior', kind: '行为', mode: '自动', text: '字段对齐测试：镜像源下载', weight: 10, hits: 7, pinned: 1 })
+  db.upsertEntry({ fp: 'qa-other', layer: 'longterm', kind: '知识', text: '字段对齐测试：另一分层', weight: 9, hits: 2 })
+  const res = await I.queryEntries('字段对齐测试', 20, { mode: 'exact' })
+  const hit = res.find((e) => e.fp === 'qa-hit')
+  assert.ok(hit, '关键词应命中 qa-hit')
+  // 前端显示依赖这些字段：缺一个就会显示「命中 undefined」或丢失 PIN 态
+  assert.equal(hit.hits, 7, 'hits 应回传')
+  assert.equal(hit.pinned, true, 'pinned 应回传（PIN 态）')
+  assert.equal(hit.mode, '自动', 'mode 应回传')
+  assert.ok(hit.ts, 'ts 应回传（created_at 兜底）')
+  assert.equal(hit.kind, '行为', 'kind 应回传')
+  assert.equal(hit.layer, 'hot/behavior', 'layer 应回传')
+  // layer 筛选：只返回指定分层（GET /entries?q=...&layer=... 的 q 分支修复点）
+  const only = await I.queryEntries('字段对齐测试', 20, { mode: 'exact', layer: 'hot/behavior' })
+  assert.ok(only.some((e) => e.fp === 'qa-hit'), 'layer 命中的条目应保留')
+  assert.ok(!only.some((e) => e.fp === 'qa-other'), '其它分层应被 layer 过滤掉')
+  // 工具返回值须为 lossless JSON：不允许 undefined/NaN
+  for (const e of res) for (const k of Object.keys(e)) {
+    assert.notEqual(e[k], undefined, `${k} 不应为 undefined`)
+    assert.ok(!(typeof e[k] === 'number' && !Number.isFinite(e[k])), `${k} 不应为 NaN`)
+  }
+})
+
+test('queryAudit：返回 action/entry_id/detail（/memory audit 按真实字段渲染）', () => {
+  const recs = I.queryAudit({ type: 'WRITE' })
+  assert.ok(recs.length >= 1, '应有 WRITE 审计记录')
+  const r = recs[0]
+  assert.equal(r.action, 'WRITE', 'action 字段存在（旧实现误读 r.event → undefined）')
+  assert.ok(typeof r.t === 'string' && r.t.length > 0, 't 字段存在')
+  assert.ok(r.detail !== undefined && r.detail !== null, 'detail 字段存在')
+  assert.equal(r.event, undefined, '不存在 event 字段（旧实现误读）')
+})
+
+// ============================================================================
 // 10. 编辑条目（updateEntryText）+ 冲突置顶（v0.5.2：可编辑能力 + 冲突浮出）
 // ============================================================================

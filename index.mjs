@@ -346,7 +346,29 @@ function registerMemoryCommand(ctx) {
             if (rest[i] === '--type' && rest[i + 1]) { type = rest[i + 1].toUpperCase(); i++ }
           }
           const recs = queryAudit({ sinceDays, type })
-          return { kind: 'success', text: recs.length ? recs.slice(-20).map((r) => `${r.t.slice(0, 16)} ${r.event} ${r.fp || ''} ${r.approved ? '[' + r.approved + ']' : ''} ${r.text || ''}`).join('\n') : '（无匹配审计记录）' }
+          // v0.6.5：queryAudit 实际返回 { t, actor, action, entry_id, detail }（db.mjs），
+          // 旧实现读 r.event/r.fp/r.approved/r.text 全是 undefined → 输出原始 JSON。
+          // 现按真实字段渲染人类可读行：时间 · 事件 · 条目 · 详情摘要
+          const fmtAudit = (r) => {
+            const d = (() => {
+              if (!r.detail) return {}
+              if (typeof r.detail === 'object') return r.detail
+              try { return JSON.parse(r.detail) } catch { return { raw: String(r.detail) } }
+            })()
+            const bits = []
+            if (d.fp) bits.push(`fp:${d.fp}`)
+            if (d.track) bits.push(`track:${d.track}`)
+            if (d.approved) bits.push(`mode:${d.approved}`)
+            if (d.op) bits.push(`op:${d.op}`)
+            if (d.memory_class) bits.push(`class:${d.memory_class}`)
+            if (d.count !== undefined) bits.push(`count:${d.count}`)
+            if (d.fallback) bits.push('fallback')
+            if (d.changed) bits.push(`config:${d.changed}`)
+            const text = d.text ? String(d.text).slice(0, 60) : (d.raw ? String(d.raw).slice(0, 60) : '')
+            return `${String(r.t || '').slice(0, 16)} ${r.action || ''}${r.entry_id ? ` ${String(r.entry_id).slice(0, 8)}` : ''}${bits.length ? ` [${bits.join(' ')}]` : ''}${text ? ` ${text}` : ''}`.trim()
+          }
+          // 查询为 id DESC（最新在前），取头部即最新 20 条（旧实现 slice(-20) 取到的是最旧记录）
+          return { kind: 'success', text: recs.length ? recs.slice(0, 20).map(fmtAudit).join('\n') : '（无匹配审计记录）' }
         }
         return { kind: 'success', text: '用法: /memory list | query <词> | add <内容> | edit <fp> <新内容> | remove <fp> | undo <fp> | pin <fp> | unpin <fp> | entries [词] | dream [--dry-run] | reflect [--dry-run] | audit [--since 7d] [--type DECAY]' }
       },
@@ -469,7 +491,7 @@ export function apply(ctx, config = {}) {
             for (const k of allowed) {
               if (body[k] !== undefined) {
                 if (k === 'petEndpoint') next[k] = typeof body[k] === 'string' && body[k] ? body[k] : null
-                else if (k === 'approvalFallback') next[k] = body[k] === 'deny' ? 'deny' : 'auto'
+                else if (k === 'approvalFallback') next[k] = body[k] === 'auto' ? 'auto' : 'deny'
                 else {
                   const v = Number(body[k])
                   if (Number.isFinite(v) && v >= 0) next[k] = v
@@ -500,7 +522,8 @@ export function apply(ctx, config = {}) {
             const limit = Math.min(500, Number(url.searchParams.get('limit')) || 200)
             const prefsTextStr = prefsText()
             if (q) {
-              const res = await queryEntries(q, limit, { mode, minWeight: 0 })
+              // v0.6.5：带 q 时也应用 layer 筛选；queryEntries 已补齐 hits/pinned/mode/ts/kind
+              const res = await queryEntries(q, limit, { mode, minWeight: 0, layer: layer || undefined })
               const seen = new Set()
               const merged = []
               for (const r of res) {
