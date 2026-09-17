@@ -4,7 +4,7 @@
 >
 > [简体中文](README.md) · [English](README.en.md)
 
-> **v0.7.0** · MIT License · DSH ≥ 0.1.1-rc.2（已在 0.1.2-rc.1 / 0.1.5-rc.1 实测）· Node ≥ 22.19.0
+> **v0.7.1** · MIT License · DSH ≥ 0.1.1-rc.2（已在 0.1.2-rc.1 / 0.1.5-rc.1 / 0.1.5-rc.2 实测）· Node ≥ 22.19.0
 
 给 [DeepSeek Harness](https://github.com/deepseek-ai/dsh)（DSH）的跨会话记忆插件：像人脑一样**分层记、分级审、会代谢、透明可改**。数据层为 SQLite（`node:sqlite` 内置、WAL 模式、零外部依赖），旧 Markdown 记忆首次启动自动迁移并保留只读备份。
 
@@ -260,6 +260,7 @@ memory action=audit aggregate=true groupBy=action   # 聚合统计
 
 | 版本 | 日期 | 要点 |
 | --- | --- | --- |
+| **v0.7.1** | 2026-09-17 | **审批门修复（真缺陷）**：`gateWrite` 调 `approval.request()` 时只传了 toolName/reason——而官方实现（dsh-user-approval 0.1.5-rc.2 源码第一行）就取 `req.agent.session`，于是 `req.agent` 为 undefined → 抛 `Cannot read properties of undefined (reading 'session')`，**所有重要写入（用户偏好/项目决策/教训）一律失败**（实测连撞两次）。修法照抄官方 `dsh-tools` 的调用形态 `{ agent, toolName, callId, reason, signal }`，并补「缺 agent → fail-closed 兜底 + 审计 `no-agent`」而不是崩（官方对无 agent 同样是返回 deny，不是抛）。新增 2 例：载荷透传 agent/callId、缺 agent 不崩且记审计；79 测试全绿 |
 | **v0.7.0** | 2026-09-17 | **镜像同步挂载**：新增 `mirror.mjs`——`dream` / `reflect` 结束后（工具 `memory action=dream`、`/memory dream`、启动自动代谢、设置页 `POST /dream` 四条路径）异步触发外部维护脚本 `E:\DE\tools\bm-sync-mirror.cjs`，把 SQLite 重新导出为人类可读镜像（`<MEMORY_ROOT>/preferences.md` + `longterm\条目镜像.md`）。**为什么由外部脚本做**：v0.6.4 单轨制的核心就是「SQLite 唯一事实源、插件不写 Markdown」，若在写入路径恢复 Markdown 写入等于退回双轨（正是 8/20~9/5 那 79 条从未注入的根因）——所以插件只负责触发，生成与备份全留在外部脚本。行为：`--dry-run` 不同步、`DSH_BIOMEMORY_MIRROR_SYNC=0` 可关闭、`DSH_BIOMEMORY_MIRROR_SCRIPT` 可换脚本；脚本缺失/失败/超时（15s）都不影响记忆本体，只留一行调试日志；脚本路径**惰性求值**（模块顶层固化会让「先 import 后设环境变量」的覆盖失效，与 `db.mjs::biomemoryDir()` 同一教训）。另：镜像脚本改为**原子写**（临时文件 + rename），避免中断留下半个镜像。★实现上踩掉两个坑：①脚本路径必须**惰性求值**（模块顶层固化会让「先 import 后设环境变量」的覆盖失效，与 `db.mjs::biomemoryDir()` 同一教训）；②**不能对子进程调 `unref()`**——实测 detached + unref 会让父进程收不到 exit/close 事件，Promise 永不 settle、调用方 await 悬挂（改用 close 事件且不 unref）。新增用例覆盖触发/环境变量透传/关闭开关/脚本缺失；77 测试全绿（连跑 3 次稳定） |
 | **v0.6.8** | 2026-09-17 | **审计双写修复**：`store.mjs` 原先 8 处、`retrieve.mjs` 1 处直接调用 `db.audit`（只写 SQLite 的 `audit_log` 表），而人类可读镜像 `<MEMORY_ROOT>/audit.log` 的追加逻辑在 `shared.mjs::audit` 里——于是自 v0.5 起，**经 memory 工具写入/编辑/删除/钉选的记忆全都不进镜像**（实查镜像里 `WRITE` 行止于 2026-08-19，只剩 `DECAY` / `CONSOLIDATE` 等代谢事件），与文档「SQLite audit_log 表 + 人类可读镜像」的说法不符。现统一走 `shared.audit`，并把 `fp` / 文本摘要提到顶层载荷（对齐 `meta.mjs` 既有约定），镜像行恢复为 `[时间] ACTION fp 摘要`；新增回归用例锁死该行为；76 测试全绿 |
 | **v0.6.7** | 2026-09-17 | **备份文件唯一性兜底**：`backupDb()` 的时间戳只有毫秒精度，同一毫秒内连续备份会撞名并**静默覆盖**上一份（「每次备份独立文件」用例偶发失败即此因）——现在撞名自动追加 `-2` / `-3` 序号后缀，每次备份必定独立成文件；对应用例改为紧密循环连续备份（同毫秒内 3 次也必须互不撞名且文件都存在）；75 测试全绿 |

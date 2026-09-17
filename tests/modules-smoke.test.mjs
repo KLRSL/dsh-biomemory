@@ -78,31 +78,59 @@ test('gate.gateWrite 默认 fail-closed：审批服务缺失 → 拒绝写入并
 test('gate.gateWrite 默认 fail-closed：request 抛错 → 拒绝写入并记审计', async () => {
   shared.setConfig({ approvalFallback: 'deny' })
   const ctx = { get: () => ({ request: async () => { throw new Error('approval service down') } }) }
-  const r = await gate.gateWrite(ctx, { track: 'user', text: '重要决策：必须记住这件事' })
+  const r = await gate.gateWrite(ctx, { track: 'user', text: '重要决策：必须记住这件事', agent: { session: { seq: 1 } } })
   assert.equal(r.approved, false, 'request 抛错 → 拒绝')
   assert.ok(JSON.stringify(shared.queryAudit({ type: 'APPROVAL-UNAVAILABLE' })).includes('request-threw'), '审计记录 request-threw')
 })
 
 test('gate：接受运行时全部授予词（含大小写/下划线变体），非授予词一律拒绝', async () => {
+  const agent = { session: { seq: 1 } }
   const ctxOf = (outcome) => ({ get: () => ({ request: async () => outcome }) })
   shared.setConfig({ approvalFallback: 'deny' })
   // 授予语义：运行时 'allowed-once'（dsh-user-approval 契约）及其大小写/分隔符变体
   for (const granted of ['allowed-once', 'ALLOWED-ONCE', 'allowed_once', 'Allowed-Once']) {
-    const r = await gate.gateWrite(ctxOf(granted), { track: 'user', text: '重要偏好测试' })
+    const r = await gate.gateWrite(ctxOf(granted), { track: 'user', text: '重要偏好测试', agent })
     assert.equal(r.approved, true, `${granted} 应视为授予`)
     assert.equal(r.mode, 'ask')
   }
   // 非授予语义：rejected/cancelled/unavailable/未知词 → 拒绝（不 fail-open）
   for (const denied of ['rejected', 'cancelled', 'unavailable', 'weird-value']) {
-    const r = await gate.gateWrite(ctxOf(denied), { track: 'user', text: '重要偏好测试' })
+    const r = await gate.gateWrite(ctxOf(denied), { track: 'user', text: '重要偏好测试', agent })
     assert.equal(r.approved, false, `${denied} 应拒绝`)
     assert.equal(r.mode, 'ask')
   }
   // 显式回到旧行为：approvalFallback='auto' 时非授予词仍按降级保存（审计标记）
   shared.setConfig({ approvalFallback: 'auto' })
-  const r2 = await gate.gateWrite(ctxOf('unavailable'), { track: 'user', text: '重要偏好测试' })
+  const r2 = await gate.gateWrite(ctxOf('unavailable'), { track: 'user', text: '重要偏好测试', agent })
   assert.equal(r2.approved, true, 'auto 策略保留旧行为')
   assert.equal(r2.mode, 'fallback')
   shared.setConfig({}) // 还原默认（deny）
   assert.equal(shared.getConfig().approvalFallback, 'deny', '默认策略为 deny（fail-closed）')
+})
+
+// ---------- v0.7.1：审批请求必须带 agent（官方契约 req.agent.session） ----------
+
+test('gate（v0.7.1）：request 载荷透传 agent/callId，undefined 的 signal 不带字段', async () => {
+  shared.setConfig({ approvalFallback: 'deny' })
+  const agent = { session: { seq: 7 } }
+  let seen = null
+  const ctx = { get: () => ({ request: async (req) => { seen = req; return 'allowed-once' } }) }
+  const r = await gate.gateWrite(ctx, { track: 'user', text: '重要偏好：载荷必须带 agent', agent, callId: 'call-123', signal: undefined })
+  assert.equal(r.approved, true)
+  assert.equal(seen?.agent, agent, 'req.agent 必须原样透传（官方实现第一行取 req.agent.session）')
+  assert.equal(seen?.toolName, shared.TOOL_NAME)
+  assert.equal(seen?.callId, 'call-123')
+  assert.ok(String(seen?.reason).includes('重要偏好：载荷必须带 agent'), 'reason 带上待审内容')
+  assert.ok(!('signal' in seen), 'signal 为 undefined 时不带该字段')
+})
+
+test('gate（v0.7.1）：缺 agent 时 fail-closed 兜底，不再崩在 reading \'session\'', async () => {
+  shared.setConfig({ approvalFallback: 'deny' })
+  let called = false
+  const ctx = { get: () => ({ request: async () => { called = true; return 'allowed-once' } }) }
+  const r = await gate.gateWrite(ctx, { track: 'user', text: '重要决策：无 agent 场景' })
+  assert.equal(called, false, '没有 agent 时不应再调用 request（官方实现会抛 Cannot read properties of undefined）')
+  assert.equal(r.approved, false)
+  assert.equal(r.mode, 'ask')
+  assert.ok(JSON.stringify(shared.queryAudit({ type: 'APPROVAL-UNAVAILABLE' })).includes('no-agent'), '审计记录 no-agent')
 })

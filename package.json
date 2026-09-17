@@ -1,7 +1,7 @@
 {
   "name": "dsh-biomemory",
-  "description": "生物仿生记忆系统（Biomimetic Memory for DeepSeek Harness）v0.7.0: 镜像同步挂载（dream/reflect 后自动把 SQLite 导出为人类可读镜像）+ 审计双写修复（记忆写入/编辑/删除/钉选同时落 SQLite 与镜像）+ 备份文件唯一性兜底 + SQLite 数据层（node:sqlite 内置，零外部依赖）+ 本地嵌入模型语义检索（bge-small-zh-v1.5，离线）+ exact/semantic/hybrid 三模式（exact 相关度优先、weight 限幅 +50%）+ RRF 融合（weight 归一到同量级）+ Markdown 自动迁移 + 冻结快照注入（Memory/Retrieved/Applied 三层分离 + 预算硬上限与逐条截断）+ 审批门（默认 fail-closed）+ 记忆代谢（断点续跑）+ 记忆钉（锁定=不遗忘 + relevance admission）+ 记忆类别与来源（memory_class/source_ref，建议≠决定）+ 结构化审计 + 深度反思 + 知识页 + 可编辑条目 + 冲突浮出置顶 + /memory 命令；管理 UI 按记忆功能设计语言（档案+时光流/紫粉品牌色）+ 深色适配（DSH 主题跟随）",
-  "version": "0.7.0",
+  "description": "生物仿生记忆系统（Biomimetic Memory for DeepSeek Harness）v0.7.1: 审批门补齐 agent（官方契约 req.agent.session，缺 agent 时 fail-closed 兜底，不再崩 reading 'session'）+ 镜像同步挂载（dream/reflect 后自动把 SQLite 导出为人类可读镜像）+ 审计双写修复（记忆写入/编辑/删除/钉选同时落 SQLite 与镜像）+ 备份文件唯一性兜底 + SQLite 数据层（node:sqlite 内置，零外部依赖）+ 本地嵌入模型语义检索（bge-small-zh-v1.5，离线）+ exact/semantic/hybrid 三模式（exact 相关度优先、weight 限幅 +50%）+ RRF 融合（weight 归一到同量级）+ Markdown 自动迁移 + 冻结快照注入（Memory/Retrieved/Applied 三层分离 + 预算硬上限与逐条截断）+ 审批门（默认 fail-closed）+ 记忆代谢（断点续跑）+ 记忆钉（锁定=不遗忘 + relevance admission）+ 记忆类别与来源（memory_class/source_ref，建议≠决定）+ 结构化审计 + 深度反思 + 知识页 + 可编辑条目 + 冲突浮出置顶 + /memory 命令；管理 UI 按记忆功能设计语言（档案+时光流/紫粉品牌色）+ 深色适配（DSH 主题跟随）",
+  "version": "0.7.1",
   "type": "module",
   "main": "./index.mjs",
   "exports": {
