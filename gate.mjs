@@ -25,7 +25,7 @@ export function isApprovalGranted(outcome) {
   return false
 }
 
-export async function gateWrite(ctx, { track, text }) {
+export async function gateWrite(ctx, { track, text, agent, callId, signal }) {
   const important = isImportant(text, track)
   if (!important) {
     return { approved: true, mode: 'auto' }
@@ -39,11 +39,20 @@ export async function gateWrite(ctx, { track, text }) {
   }
   const approval = ctx.get('approval')
   if (!approval) return fallback('service-missing')
+  // v0.7.1 修：官方契约（dsh-user-approval 0.1.5-rc.2 实测源码）request(req) 第一行就是
+  // `const session = req.agent.session`，且要求该会话有未闭合的 turn；dsh-tools 的官方调用
+  // 形态是 `{ agent, toolName, callId, reason, signal }`，没有 agent 时官方自己返回 deny
+  // （fail-closed），不是崩。此处旧代码只传 toolName/reason → req.agent 为 undefined →
+  // 抛 `Cannot read properties of undefined (reading 'session')`，所有重要写入一律失败。
+  if (!agent) return fallback('no-agent')
   let outcome
   try {
     outcome = await approval.request({
+      agent,
       toolName: TOOL_NAME,
+      ...callId !== undefined ? { callId } : {},
       reason: `${REQUEST_MARKER} add ${track}\n${text}`,
+      ...signal !== undefined ? { signal } : {},
     })
   } catch (err) {
     // v0.6.5：异常不再静默吞掉——记审计后再按 fallback 策略处理

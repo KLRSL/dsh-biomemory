@@ -161,7 +161,7 @@ function makeMemoryTool(ctx) {
       const sessionId = exec.agent?.id
       if (action === 'add') {
         if (!text.trim()) return { ok: false, error: 'text 必填' }
-        const g = await gateWrite(ctx, { track, text: text.trim() })
+        const g = await gateWrite(ctx, { track, text: text.trim(), agent: exec.agent, callId: exec.callId, signal: exec.signal })
         if (!g.approved) return { ok: false, error: `写入未获批准（${g.outcome || 'denied'}）——重要记忆需人工审批（可设置 approvalFallback=auto 自动保存）` }
         const r = writeEntry({ track, text: text.trim(), sessionId, approved: g.mode === 'ask', mode: g.mode, source })
         return { ok: true, ...r, mode: g.mode }
