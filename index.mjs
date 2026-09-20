@@ -581,8 +581,15 @@ export function apply(ctx, config = {}) {
             const next = { ...CFG }
             for (const k of allowed) {
               if (body[k] !== undefined) {
+                // v0.8.2（真机实测踩坑）：新增的**字符串/布尔**配置必须按类型落库。
+                // 旧代码除 petEndpoint/approvalFallback 外一律 Number()，于是：
+                //   extractProvider/extractModel 被存成 0（之后 String(0)="0" 会被当成提供方名 → NO_ADAPTER）
+                //   preloadEmbeddings 的 false/true 变成 0/1
                 if (k === 'petEndpoint') next[k] = typeof body[k] === 'string' && body[k] ? body[k] : null
                 else if (k === 'approvalFallback') next[k] = body[k] === 'auto' ? 'auto' : 'deny'
+                else if (k === 'extractProvider' || k === 'extractModel') next[k] = typeof body[k] === 'string' ? body[k].trim() : ''
+                else if (k === 'nearDuplicateAction') next[k] = body[k] === 'skip' ? 'skip' : 'merge'
+                else if (k === 'preloadEmbeddings') next[k] = body[k] === true || body[k] === 1 || body[k] === '1' || body[k] === 'true'
                 else {
                   const v = Number(body[k])
                   if (Number.isFinite(v) && v >= 0) next[k] = v
