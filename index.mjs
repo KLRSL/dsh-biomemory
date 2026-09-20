@@ -34,7 +34,7 @@ import {
 import {
   parseEntryLine, formatEntryLine, readEntries, scanAllFiles,
   migrateMarkdownToDb, ensureVectors, writeEntry, setPin,
-  consolidateHits, removeEntry, restoreEntry, unarchiveEntry, entryStatus, updateEntryText,
+  consolidateHits, removeEntry, restoreEntry, unarchiveEntry, setEntryStatus, entryStatus, updateEntryText,
 } from './store.mjs'
 import { tokenize, tfidfVectors, cosine, semanticSearch, queryEntries } from './retrieve.mjs'
 import { runDream, clusterEntries, latestReflection, runReflect, shouldRunAuto } from './meta.mjs'
@@ -680,6 +680,30 @@ export function apply(ctx, config = {}) {
             } catch (err) {
               return send(400, { ok: false, error: err instanceof Error ? err.message : String(err) })
             }
+          }
+          // v0.8.1：冲突裁决闭环——「作废」把条目置为 superseded（退出注入/检索但保留可恢复）
+          if (req.method === 'POST' && p === '/entries/supersede') {
+            let body = {}
+            try { body = JSON.parse(await readBody(req)) } catch { /* ignore */ }
+            if (!body.fp) return send(400, { ok: false, error: 'fp 必填' })
+            const r = setEntryStatus(body.fp, 'superseded', { reason: body.reason })
+            return r.ok ? send(200, { ok: true, fp: r.fp, from: r.from, to: r.to }) : send(404, r)
+          }
+          if (req.method === 'POST' && p === '/entries/reactivate') {
+            let body = {}
+            try { body = JSON.parse(await readBody(req)) } catch { /* ignore */ }
+            if (!body.fp) return send(400, { ok: false, error: 'fp 必填' })
+            const r = setEntryStatus(body.fp, 'active')
+            return r.ok ? send(200, { ok: true, fp: r.fp, from: r.from, to: r.to }) : send(404, r)
+          }
+          if (req.method === 'GET' && p === '/superseded') {
+            const limit = Math.min(500, Number(url.searchParams.get('limit')) || 200)
+            const conn = db.openDb()
+            const rows = conn.prepare(
+              `SELECT fp, fragment_type, kind, mode, weight, hits, pinned, created_at, text
+               FROM entries WHERE status = 'superseded' ORDER BY created_at DESC LIMIT ?`
+            ).all(limit)
+            return send(200, { ok: true, entries: rows.map((r) => ({ ...r, pinned: !!r.pinned })) })
           }
           if (req.method === 'POST' && p === '/entries/pin') {
             let body = {}

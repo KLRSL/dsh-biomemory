@@ -331,6 +331,24 @@ export function unarchiveEntry(fp, opts = {}) {
   return { ok: true, fp, layer: e.layer, kind: e.kind, from: e.weight, to: weight, text: e.text }
 }
 
+// 状态切换（v0.8.1）：把「归档 / 作废 / 恢复」收敛到一条路径，并让 superseded 这个死值有了语义——
+//   archived   = 因权重衰减被动下架（冷归档）
+//   superseded = 因人工裁决被更新的结论取代（冲突裁决闭环）
+// 二者都不再进入快照注入与检索（db.allEntries 只取 active），区别只在"为什么下架"。
+export function setEntryStatus(fp, status, opts = {}) {
+  if (!['active', 'archived', 'superseded'].includes(status)) return { ok: false, error: `非法状态 ${status}` }
+  db.openDb()
+  const e = db.getByFp(fp)
+  if (!e) return { ok: false, error: `未找到 [fp:${fp}]` }
+  if (e.status === status) return { ok: false, error: `[fp:${fp}] 已经是 ${status}` }
+  const w = Number(opts.weight)
+  const weight = Number.isFinite(w) && w > 0 ? w : e.weight
+  db.upsertEntry({ fp, status, weight })
+  const action = status === 'superseded' ? 'SUPERSEDE' : status === 'archived' ? 'ARCHIVE-MANUAL' : 'REACTIVATE'
+  audit(action, { fp, text: e.text, entry_id: e.entry_id, detail: { from: e.status, to: status, reason: opts.reason || null } })
+  return { ok: true, fp, from: e.status, to: status, layer: e.layer, kind: e.kind, text: e.text }
+}
+
 // 单条目回滚：从最近备份库读回被删除的条目（保留元数据，向量置空重算），审计 RESTORE
 export function restoreEntry(fp) {
   db.openDb()

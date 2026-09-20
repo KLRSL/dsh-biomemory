@@ -281,7 +281,7 @@ export function allEntries({ includeArchived = false } = {}) {
   const db = openDb()
   const sql = includeArchived
     ? 'SELECT * FROM entries ORDER BY created_at'
-    : "SELECT * FROM entries WHERE status = 'active' OR status = 'superseded' ORDER BY created_at"
+    : "SELECT * FROM entries WHERE status = 'active' ORDER BY created_at" // v0.8.1：superseded（人工作废）与 archived 一样不参与注入/检索
   return db.prepare(sql).all().map(fromRow)
 }
 
@@ -321,7 +321,7 @@ export function entriesWithVectors({ includeArchived = false } = {}) {
   const db = openDb()
   const sql = includeArchived
     ? 'SELECT * FROM entries WHERE vector IS NOT NULL'
-    : "SELECT * FROM entries WHERE vector IS NOT NULL AND status IN ('active','superseded')"
+    : "SELECT * FROM entries WHERE vector IS NOT NULL AND status = 'active'"
   return db.prepare(sql).all().map((r) => ({ entry: fromRow(r), vec: new Float32Array(r.vector.buffer, r.vector.byteOffset, r.vector.byteLength / 4) }))
 }
 

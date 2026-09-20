@@ -147,6 +147,27 @@ test('写入去重（skip 模式）：nearDuplicateAction=skip 时只提示、�
   I.setConfig({ nearDuplicateAction: 'merge' }) // 还原默认
 })
 
+test('冲突裁决：作废（superseded）退出注入与检索，且可恢复（死值变活语义）', () => {
+  const { fp } = store.writeEntry({ track: 'agent', text: '作废语义测试：这条会被人工裁决作废，然后再恢复。' })
+  assert.ok(renderSnapshot().includes('作废语义测试'), '写入后应进入快照')
+  const r = store.setEntryStatus(fp, 'superseded', { reason: '被更新的结论取代' })
+  assert.equal(r.ok, true)
+  assert.equal(r.from, 'active')
+  assert.equal(db.getByFp(fp).status, 'superseded')
+  assert.equal(renderSnapshot().includes('作废语义测试'), false, '作废条目不再进快照注入')
+  assert.equal(db.allEntries().some((e) => e.fp === fp), false, '作废条目不在活跃集合（检索/代谢都看不到）')
+  assert.equal(auditCount('SUPERSEDE'), 1)
+
+  const back = store.setEntryStatus(fp, 'active')
+  assert.equal(back.ok, true)
+  assert.ok(renderSnapshot().includes('作废语义测试'), '恢复后重新参与注入')
+  assert.equal(auditCount('REACTIVATE'), 1)
+
+  assert.equal(store.setEntryStatus(fp, 'nope').ok, false, '非法状态拒绝')
+  assert.equal(store.setEntryStatus(fp, 'active').ok, false, '重复设置同一状态拒绝')
+  assert.equal(store.setEntryStatus('zzzzzzzz', 'superseded').ok, false, '不存在的指纹拒绝')
+})
+
 test('restoreEntry 保留原 entry_id（审计关联不再悬空）', () => {
   const { fp } = store.writeEntry({ track: 'agent', text: '回滚测试条目：删除后从备份恢复应保留原 entry_id。' })
   const before = db.getByFp(fp).entry_id
