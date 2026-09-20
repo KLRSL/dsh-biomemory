@@ -93,6 +93,23 @@ test('快照不注入归档条目（归档 = 退出注入，避免静默下架�
   assert.ok(!renderSnapshot().includes('ZZZARCHIVEDZZZ'))
 })
 
+test('写入去重（记忆原子化）：高度相似条目不入库，返回可合并的已有指纹', () => {
+  // 注意：精确指纹只看「前 20 字」，所以两条记忆若开头 20 字相同会先被判成 duplicate；
+  // 近重复检测补的正是「换了说法/换了开头」的那一类。
+  const first = store.writeEntry({ track: 'agent', text: '写入去重测试：dsh 启动前必须检查 3080 端口，防止重复拉起。' })
+  assert.equal(first.ok, true)
+  const again = store.writeEntry({ track: 'agent', text: '写入去重校验：dsh 启动前必须检查 3080 端口，防止重复拉起。' })
+  assert.equal(again.skipped, true)
+  assert.equal(again.reason, 'near-duplicate')
+  assert.equal(again.similar.fp, first.fp)
+  assert.ok(again.similar.score >= 0.7, `相似度应达标，实际 ${again.similar && again.similar.score}`)
+  assert.equal(auditCount('WRITE-SKIP'), 1)
+  // 不同主题仍正常写入
+  const other = store.writeEntry({ track: 'agent', text: '码头进度条要同时支持百分比与分数两种写法（来自另一主题的独立条目）。' })
+  assert.equal(other.ok, true)
+  assert.equal(other.skipped, undefined)
+})
+
 test('restoreEntry 保留原 entry_id（审计关联不再悬空）', () => {
   const { fp } = store.writeEntry({ track: 'agent', text: '回滚测试条目：删除后从备份恢复应保留原 entry_id。' })
   const before = db.getByFp(fp).entry_id

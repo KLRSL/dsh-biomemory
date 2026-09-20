@@ -81,6 +81,7 @@ function makeMemoryTool(ctx) {
       '三层概念：Memory=存储层（所有条目）；Retrieved=查询候选（query/list 返回的子集）；',
       'Applied=实际注入 prompt 的内容（会话启动时冻结的快照，见记忆快照段）。查询≠注入，检索到不代表已采用。',
       '用法: memory action=add text="..." [track=user|agent] [source="来源说明"] —— 保存（重要项自动请求审批，审批不可用时按配置自动保存）',
+      '      ⚠️ 写入去重（v0.8.0）：若与已有同类条目高度相似（默认 bigram 相似度 ≥0.7），不会新增，而是返回相似条目的 fp 与提示——此时应改用 update 合并，不要换措辞硬写第二条',
       '      memory action=query text="关键词" [mode=hybrid|exact|semantic] [projectId=项目] [topK=10] [minWeight=0.1] [fragmentTypes=decision,preference] [includeArchived=false] —— 查询',
       '           （hybrid=精确+语义混合（默认）；exact=关键词精确；semantic=向量语义；命中自动巩固）',
       '      memory action=update fp="指纹" text="新内容" —— 编辑一条（保留锁定/权重，自动审计可追溯）',
@@ -176,6 +177,15 @@ function makeMemoryTool(ctx) {
         const g = await gateWrite(ctx, { track, text: text.trim(), agent: exec.agent, callId: exec.callId, signal: exec.signal })
         if (!g.approved) return { ok: false, error: `写入未获批准（${g.outcome || 'denied'}）——重要记忆需人工审批（可设置 approvalFallback=auto 自动保存）` }
         const r = writeEntry({ track, text: text.trim(), sessionId, approved: g.mode === 'ask', mode: g.mode, source })
+        // v0.8.0：近似重复（写入去重）——不新增，直接告诉模型改为 update 合并到已有条目
+        if (r.skipped && r.reason === 'near-duplicate') {
+          return {
+            ok: true,
+            ...r,
+            mode: g.mode,
+            note: `未新增：与已有条目 [fp:${r.similar.fp}] 高度相似（${r.similar.score}）。请改用 memory action=update fp="${r.similar.fp}" text="合并后的完整内容"，避免同一件事留下多条碎片记忆。`,
+          }
+        }
         return { ok: true, ...r, mode: g.mode }
       }
       if (action === 'query') {
@@ -498,7 +508,7 @@ export function apply(ctx, config = {}) {
           if (req.method === 'POST' && p === '/config') {
             let body = {}
             try { body = JSON.parse(await readBody(req)) } catch { /* ignore */ }
-            const allowed = ['halfLifeDays', 'decayThreshold', 'consolidateThreshold', 'weightCap', 'hotTokenLimit', 'maxQueryResults', 'approvalFallback', 'autoDreamDays', 'autoReflectDays', 'petEndpoint']
+            const allowed = ['halfLifeDays', 'decayThreshold', 'consolidateThreshold', 'weightCap', 'hotTokenLimit', 'maxQueryResults', 'approvalFallback', 'autoDreamDays', 'autoReflectDays', 'nearDuplicateThreshold', 'preloadEmbeddings', 'petEndpoint']
             if (body.reset === true) {
               try { fs.unlinkSync(PATHS.config) } catch { /* ignore */ }
               setConfig({ ...DEFAULTS })

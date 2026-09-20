@@ -35,6 +35,8 @@ export const DEFAULTS = {
   autoReflectDays: 3,     // 启动时距上次反思 ≥ 此天数 → 自动执行（0=关闭）
   conflictOverlap: 3,     // 冲突仲裁：行为与单条偏好的专有双字重叠阈值（P0-003 二次验证）
   preloadEmbeddings: false, // v0.8.0：启动时是否预建向量索引（旧行为=每次启动强制加载 ~24MB 嵌入模型；默认关）
+  nearDuplicateThreshold: 0.7, // v0.8.0：写入去重——与已有同类条目的中文 bigram Jaccard ≥ 此值时不再新增，改为提示合并（0=关闭；
+                               // 实测「换了说法的同一件事」约 0.7~0.8，完全改写才会低于 0.6）
 }
 
 // 冲突阈值从配置读取（模块加载时为默认，apply 时更新）
@@ -225,6 +227,17 @@ const CONFLICT_GENERIC_BIGRAMS = new Set([
   '项目', '工具', '命令', '配置', '设置', '默认', '完全', '不要', '没有', '不是', '已经',
   '之后', '之前', '时候', '服务', '加速', '速服', '告知', '访问', '打开',
 ])
+
+// 写入去重（v0.8.0）：中文 bigram Jaccard 相似度（0..1）——判断「即将写入的内容是否与已有条目高度重复」。
+// 纯函数、零依赖、不触发嵌入模型，可安全地放在写入路径上同步调用。
+export function bigramJaccard(a, b) {
+  const A = zhBigrams(String(a || ''))
+  const B = zhBigrams(String(b || ''))
+  if (!A.size || !B.size) return 0
+  let inter = 0
+  for (const g of A) if (B.has(g)) inter++
+  return inter / (A.size + B.size - inter)
+}
 
 export function detectConflict(entry, prefsText) {
   if (CONFLICT_LEARN_HINTS.test(entry.text)) return false

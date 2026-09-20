@@ -16,7 +16,7 @@ import * as db from './db.mjs'
 import * as embed from './embed.mjs'
 import {
   MEMORY_ROOT, PATHS, readFile, writeFile, appendFile, nowStamp, isoNow, tsToIso, fingerprint,
-  isImportant, detectConflict, CFG, ensureDirs, audit as sharedAudit, dbgLog,
+  isImportant, detectConflict, bigramJaccard, CFG, ensureDirs, audit as sharedAudit, dbgLog,
 } from './shared.mjs'
 import { clearSummaryPending } from './session-state.mjs'
 import { petNotify } from './notify.mjs'
@@ -222,6 +222,23 @@ export function writeEntry({ track, text, sessionId, approved, mode, source }) {
   const modeLabel = mode === 'fallback' ? '降级' : (mode === 'ask' ? '审批' : (mode === 'auto' ? '自动' : (approved ? '审批' : '自动')))
   const layer = track === 'user' ? 'longterm' : 'longterm'
   const fragmentType = track === 'user' ? (isImportant(text, track) ? 'preference' : 'fact') : 'lesson'
+  // v0.8.0 写入去重升级（记忆原子化）：与已有**同类**条目高度相似时不再新增，改为提示合并。
+  // 碎片化的根因就是「同一件事被反复写成新条目」（8/20~9/5 那批只能靠人工合并，且漏合并的会被
+  // 正常代谢归档）。用纯 bigram Jaccard，不触发嵌入模型；阈值可由 nearDuplicateThreshold 调整（0=关闭）。
+  const nearThr = Number(CFG.nearDuplicateThreshold)
+  if (Number.isFinite(nearThr) && nearThr > 0) {
+    let best = null
+    for (const e of db.allEntries()) {
+      if (e.fragment_type !== fragmentType) continue
+      const score = bigramJaccard(text, e.text)
+      if (!best || score > best.score) best = { fp: e.fp, score, text: String(e.text || '') }
+    }
+    if (best && best.score >= nearThr) {
+      const score = Math.round(best.score * 1000) / 1000
+      audit('WRITE-SKIP', { fp: best.fp, text: text.trim(), detail: { reason: 'near-duplicate', score, track } })
+      return { ok: true, skipped: true, reason: 'near-duplicate', similar: { fp: best.fp, score, text: best.text.slice(0, 200) } }
+    }
+  }
   const memoryClass = inferMemoryClass({ track, text })
   const sourceRef = source || (sessionId ? `session:${sessionId}` : null)
   const entryId = db.upsertEntry({
