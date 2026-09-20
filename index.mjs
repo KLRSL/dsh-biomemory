@@ -34,7 +34,7 @@ import {
 import {
   parseEntryLine, formatEntryLine, readEntries, scanAllFiles,
   migrateMarkdownToDb, ensureVectors, writeEntry, setPin,
-  consolidateHits, removeEntry, restoreEntry, entryStatus, updateEntryText,
+  consolidateHits, removeEntry, restoreEntry, unarchiveEntry, entryStatus, updateEntryText,
 } from './store.mjs'
 import { tokenize, tfidfVectors, cosine, semanticSearch, queryEntries } from './retrieve.mjs'
 import { runDream, clusterEntries, latestReflection, runReflect, shouldRunAuto } from './meta.mjs'
@@ -591,6 +591,25 @@ export function apply(ctx, config = {}) {
             const groupBy = url.searchParams.get('groupBy') || 'action'
             const agg = auditAggregate({ sinceDays, groupBy })
             return send(200, { ok: true, entries: agg })
+          }
+          // v0.8.1：归档条目单独开一个只读端点——归档条目在列表/检索里默认不可见（这是有意的），
+          // 但用户必须能看到它们并恢复，否则「归档」等于静默下架（fp:1fed41ef 的教训）。
+          if (req.method === 'GET' && p === '/archived') {
+            const limit = Math.min(500, Number(url.searchParams.get('limit')) || 200)
+            const conn = db.openDb()
+            const rows = conn.prepare(
+              `SELECT fp, fragment_type, kind, mode, weight, hits, pinned, created_at, text
+               FROM entries WHERE status = 'archived' ORDER BY created_at DESC LIMIT ?`
+            ).all(limit)
+            const prefsStr = prefsText()
+            return send(200, { ok: true, entries: rows.map((r) => ({ ...r, pinned: !!r.pinned, status: entryStatus(r, prefsStr) })) })
+          }
+          if (req.method === 'POST' && p === '/entries/unarchive') {
+            let body = {}
+            try { body = JSON.parse(await readBody(req)) } catch { /* ignore */ }
+            if (!body.fp) return send(400, { ok: false, error: 'fp 必填' })
+            const r = unarchiveEntry(body.fp, body.weight !== undefined ? { weight: Number(body.weight) } : {})
+            return r.ok ? send(200, { ok: true, fp: r.fp, weight: r.to }) : send(404, r)
           }
           if (req.method === 'POST' && p === '/entries/pin') {
             let body = {}
