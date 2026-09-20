@@ -34,6 +34,7 @@ export const DEFAULTS = {
   autoDreamDays: 7,       // 启动时距上次代谢 ≥ 此天数 → 自动执行（0=关闭）
   autoReflectDays: 3,     // 启动时距上次反思 ≥ 此天数 → 自动执行（0=关闭）
   conflictOverlap: 3,     // 冲突仲裁：行为与单条偏好的专有双字重叠阈值（P0-003 二次验证）
+  preloadEmbeddings: false, // v0.8.0：启动时是否预建向量索引（旧行为=每次启动强制加载 ~24MB 嵌入模型；默认关）
 }
 
 // 冲突阈值从配置读取（模块加载时为默认，apply 时更新）

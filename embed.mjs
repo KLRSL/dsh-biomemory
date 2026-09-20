@@ -33,9 +33,12 @@ const MODELS_ROOT = process.env.DSH_MODELS_ROOT || path.join(os.homedir(), '.dsh
 let _extractor = null
 let _loading = null
 let _modelOk = false
+// v0.8.0：负缓存——加载失败后不再每次语义查询都重试 import+pipeline 并刷屏告警
+let _failed = false
 
 /** 初始化嵌入模型（懒加载，幂等）。返回提取器或 null（不可用） */
 export async function getExtractor() {
+  if (_failed) return null
   if (_modelOk) return _extractor
   if (_loading) return _loading
   _loading = (async () => {
@@ -51,8 +54,9 @@ export async function getExtractor() {
       _modelOk = true
       return _extractor
     } catch (err) {
-      console.warn('[dsh-biomemory] 嵌入模型不可用，语义检索降级为关键词检索：', err instanceof Error ? err.message : String(err))
+      console.warn('[dsh-biomemory] 嵌入模型不可用，语义检索降级为关键词检索（本次进程内不再重试）：', err instanceof Error ? err.message : String(err))
       _modelOk = false
+      _failed = true
       return null
     } finally {
       _loading = null
@@ -61,12 +65,9 @@ export async function getExtractor() {
   return _loading
 }
 
-/** 模型是否可用（同步判断，供状态页显示） */
-export function isModelReady() { return _modelOk }
-
 /** 模型信息 */
 export function modelInfo() {
-  return { id: MODEL_ID, dim: 512, path: path.join(MODELS_ROOT, MODEL_ID), ready: _modelOk, offline: true }
+  return { id: MODEL_ID, dim: 512, path: path.join(MODELS_ROOT, MODEL_ID), ready: _modelOk, failed: _failed, offline: true }
 }
 
 /** 文本 → 512 维归一化向量；失败返回 null */
@@ -79,23 +80,6 @@ export async function embed(text) {
   } catch {
     return null
   }
-}
-
-/** 批量嵌入（迁移/索引重建用），逐条容错 */
-export async function embedMany(texts, { onProgress } = {}) {
-  const extractor = await getExtractor()
-  if (!extractor) return null
-  const results = []
-  for (let i = 0; i < texts.length; i++) {
-    try {
-      const out = await extractor(String(texts[i] ?? '').slice(0, 2000), { pooling: 'mean', normalize: true })
-      results.push(new Float32Array(out.data))
-    } catch {
-      results.push(null)
-    }
-    onProgress?.(i + 1, texts.length)
-  }
-  return results
 }
 
 /** 余弦相似度（向量已归一化时即点积） */
@@ -249,9 +233,4 @@ export async function search({ query, mode = 'hybrid', entries = [], vectorEntri
   if (!qv) return exact()
   const semanticR = semanticTopK(qv, vectorEntries, Math.max(topN * 2, 20), minWeight)
   return hybridFuse(exactR, semanticR, entries, topN, { weightCap })
-}
-
-/** 记忆内容 → 嵌入文本（摘要优先，文档 §4.2：summary 而非完整 source_text） */
-export function embedTextOf(entry) {
-  return entry.summary || entry.text || ''
 }

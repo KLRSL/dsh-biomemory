@@ -205,7 +205,12 @@ test('setPin：pin 后条目 pinned=true，unpin 恢复', async () => {
   assert.equal(r1.ok, true)
   assert.equal(r1.pinned, true)
   assert.equal(db.getByFp('e5e5e5').pinned, true, 'SQLite 中 pinned=true')
-  assert.equal(db.getByFp('e5e5e5').weight, 1, '钉住后权重固定为 1（不参与衰减）')
+  // v0.8.0：钉住不再把权重清零（旧实现 weight=1 → 一解锁就低于 decayThreshold 被归档）。
+  // 「不参与衰减」由 runDream 跳过 pinned 条目保证，而不是靠把权重压成 1。
+  assert.equal(db.getByFp('e5e5e5').weight, 10, '钉住不改权重')
+  const dream = I.runDream()
+  assert.equal(db.getByFp('e5e5e5').weight, 10, '钉住条目不被 dream 衰减')
+  assert.ok(dream.scanned >= 0)
 
   const r2 = I.setPin('e5e5e5', false)
   assert.equal(r2.ok, true)

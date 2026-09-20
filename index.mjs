@@ -32,8 +32,8 @@ import {
   detectConflict, zhBigrams, dbgLog, MEMORY_ROOT, prefsText,
 } from './shared.mjs'
 import {
-  parseEntryLine, formatEntryLine, readEntries, scanAllFiles, rewriteFile,
-  migrateMarkdownToDb, ensureVectors, writeEntry, setPin, findByText, backupNow, latestBackup,
+  parseEntryLine, formatEntryLine, readEntries, scanAllFiles,
+  migrateMarkdownToDb, ensureVectors, writeEntry, setPin,
   consolidateHits, removeEntry, restoreEntry, entryStatus, updateEntryText,
 } from './store.mjs'
 import { tokenize, tfidfVectors, cosine, semanticSearch, queryEntries } from './retrieve.mjs'
@@ -43,7 +43,7 @@ import { gateWrite, selfHeal } from './gate.mjs'
 import { setPetEndpoint, getPetEndpoint, petNotify } from './notify.mjs'
 import { scheduleMirrorSync } from './mirror.mjs'
 import {
-  markSummaryPending, clearSummaryPending, isSummaryPending, getSummarySid,
+  markSummaryPending, clearSummaryPending, isSummaryPending,
   getLastTurnEnd, setLastTurnEnd,
 } from './session-state.mjs'
 
@@ -401,14 +401,26 @@ export function apply(ctx, config = {}) {
   selfHeal()
   dbgLog('=== apply 执行 ===')
 
-  // v0.5：后台预建向量索引（模型可用时，不阻塞启动）
-  setTimeout(() => { ensureVectors().then((r) => dbgLog(`vectors: ${JSON.stringify(r)}`)) }, 100)
+  // v0.8.0：向量索引改为**真懒加载**——默认不在启动时预建（旧实现在 apply 后 100ms 强制
+  // ensureVectors，等于每次 DSH 启动都要加载 ~24MB onnx 模型并初始化 onnxruntime）。
+  // 需要预热时在配置里设 preloadEmbeddings=true（或环境变量 DSH_BIOMEMORY_PRELOAD=1）。
+  if (CFG.preloadEmbeddings === true || process.env.DSH_BIOMEMORY_PRELOAD === '1') {
+    setTimeout(() => { ensureVectors().then((r) => dbgLog(`vectors: ${JSON.stringify(r)}`)) }, 100)
+  }
 
   // 0. 启动自动代谢/反思（距上次执行 ≥ 配置天数时自动执行，0=关闭）
+  //    v0.8.0 修复：判据一律取 meta 表时间戳（lastDreamAt / lastReflectAt）。
+  //    旧实现用 store.latestBackup()（MEMORY_ROOT/backups 下的 12 位数字目录，是 v0.6.4 单轨制前
+  //    Markdown 备份的产物、之后不再生成）→ 恒为 null → 每次插件加载都全量跑一遍 dream，
+  //    叠加当时的复合衰减把行为记忆压到归档阈值以下（实测 19 条被误归档，见 fp:1fed41ef）。
   try {
+    const agoDays = (v) => {
+      const t = v ? new Date(v).getTime() : NaN
+      return Number.isNaN(t) ? null : (Date.now() - t) / 86400000
+    }
     if (CFG.autoDreamDays > 0) {
-      const lb = latestBackup()
-      if (!lb || Date.now() - fs.statSync(lb).mtimeMs >= CFG.autoDreamDays * 86400000) {
+      const d = agoDays(db.metaGet('lastDreamAt'))
+      if (d === null || d >= CFG.autoDreamDays) {
         const r = runDream()
         audit('AUTO-DREAM', { scanned: r.scanned, decayed: r.decayed, archived: r.archived })
         scheduleMirrorSync('auto-dream').catch(() => {})
@@ -416,8 +428,8 @@ export function apply(ctx, config = {}) {
       }
     }
     if (CFG.autoReflectDays > 0) {
-      const lr = latestReflection()
-      if (!lr || Date.now() - fs.statSync(lr).mtimeMs >= CFG.autoReflectDays * 86400000) {
+      const d = agoDays(db.metaGet('lastReflectAt'))
+      if (d === null || d >= CFG.autoReflectDays) {
         const r = runReflect()
         audit('AUTO-REFLECT', { reportFile: r.reportFile })
         dbgLog(`auto reflect: ${r.reportFile}`)
@@ -471,7 +483,7 @@ export function apply(ctx, config = {}) {
         try {
           if (req.method === 'GET' && p === '/status') {
             const s = db.stats()
-            const auditRecs = queryAudit({})
+            const auditRecs = queryAudit({ limit: 100000 }) // v0.8.0：状态页代谢健康要真实计数（旧代码走默认 limit=50 → 恒 ≤50）
             const conn = db.openDb()
             const byType = conn.prepare('SELECT fragment_type AS k, COUNT(*) AS c FROM entries GROUP BY fragment_type ORDER BY c DESC').all().map((r) => ({ key: r.k, count: r.c }))
             const byWeight = conn.prepare("SELECT CASE WHEN weight >= 10 THEN '10+' WHEN weight >= 5 THEN '5-9' WHEN weight >= 3 THEN '3-4' ELSE '<3' END AS k, COUNT(*) AS c FROM entries GROUP BY k ORDER BY c DESC").all().map((r) => ({ key: r.k, count: r.c }))
@@ -641,8 +653,6 @@ export const __internals = {
   queryEntries,
   setPin,
   scanAllFiles,
-  backupNow,
-  latestBackup,
   migrateMarkdownToDb,
   ensureVectors,
   sessionSummarySectionText,

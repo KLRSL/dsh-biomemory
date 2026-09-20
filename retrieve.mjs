@@ -118,7 +118,7 @@ export async function queryEntries(query, limit = CFG.maxQueryResults, opts = {}
     if (!e) continue
     const isSem = mode !== 'exact' && !kwHits.has(e.fp)
     out.push({ layer: e.layer, fp: e.fp, text: e.text, weight: e.weight, semantic: isSem, score: r.score, fragment_type: e.fragment_type, memory_class: e.memory_class, source_ref: e.source_ref, created_at: e.created_at, status: entryStatus(e, prefsTextStr), kind: e.kind, mode: e.mode, hits: e.hits, pinned: !!e.pinned, ts: e.created_at })
-    if (ql) hitFps.add(e.fp)
+    if (ql && kwHits.has(e.fp)) hitFps.add(e.fp) // v0.8.0：只给真实关键词命中加固（原来把所有返回条目都算命中，与下方注释「真实召回才巩固」不符）
   }
   // 精确关键词命中未进 top-N 的也补入（保底不丢）
   if (ql && kwHits.size) {

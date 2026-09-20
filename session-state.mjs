@@ -25,10 +25,6 @@ export function isSummaryPending() {
   return _summaryPending
 }
 
-export function getSummarySid() {
-  return _summarySid
-}
-
 export function setLastTurnEnd(ts, sid) {
   _lastTurnEnd = ts
   _lastTurnEndSession = sid || ''

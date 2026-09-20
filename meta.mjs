@@ -30,6 +30,13 @@ export function runDream(opts = {}) {
   const resumeFp = !dryRun && opts.resume !== false ? db.metaGet(checkpointKey) : null
   const prefsTextStr = prefsText()
   const now = Date.now()
+  // 衰减基准（v0.8.0 幂等修复）：按「距上次代谢的增量时间」衰减，而不是每次拿当前权重乘全龄因子。
+  // 旧实现在 dream 被重复触发时会发生复合衰减（指数加速），实测把行为记忆压到归档阈值以下（见 fp:1fed41ef）。
+  const lastDreamMs = (() => {
+    const v = db.metaGet('lastDreamAt')
+    const t = v ? new Date(v).getTime() : NaN
+    return Number.isNaN(t) ? null : t
+  })()
   const entries = db.allEntries()
   let started = false
   let batchCount = 0
@@ -43,17 +50,24 @@ export function runDream(opts = {}) {
     }
     report.scanned++
     let changed = false
-    // 1. 衰减：w * 0.5^(age/halfLife)
-    let ageDays = 0
+    // 1. 衰减（幂等）：基准 = max(创建时间, 上次代谢时间)。
+    //    - 新建条目：从创建时刻起按龄衰减（保留「用进废退」语义）；
+    //    - 已有条目：只按「距上次代谢的增量时间」衰减 → dream 重复执行不再叠加。
+    let baseMs = null
     if (e.created_at) {
-      const t = new Date(e.created_at)
-      if (!Number.isNaN(t.getTime())) ageDays = Math.max(0, (now - t.getTime()) / 86400000)
+      const t = new Date(e.created_at).getTime()
+      if (!Number.isNaN(t)) baseMs = t
     }
+    if (lastDreamMs !== null) baseMs = baseMs === null ? lastDreamMs : Math.max(baseMs, lastDreamMs)
+    const ageDays = baseMs === null ? 0 : Math.max(0, (now - baseMs) / 86400000)
     const decayed = e.weight * Math.pow(0.5, ageDays / CFG.halfLifeDays)
-    if (decayed < e.weight) {
+    const nextWeight = Math.max(1, Math.round(decayed * 10) / 10)
+    // 只在「入库精度（1 位小数）真的下降」时才算一次衰减：增量极小时既不记 DECAY 也不写库，
+    // 保证重复代谢真正幂等（否则每次都会因纳秒级增量产生一条噪声 DECAY）。
+    if (nextWeight < e.weight) {
       report.decayed++
-      report.items.push({ op: 'DECAY', layer: e.layer, fp: e.fp, entry_id: e.entry_id, from: e.weight, to: Math.max(1, Math.round(decayed * 10) / 10) })
-      e.weight = Math.max(1, Math.round(decayed * 10) / 10)
+      report.items.push({ op: 'DECAY', layer: e.layer, fp: e.fp, entry_id: e.entry_id, from: e.weight, to: nextWeight })
+      e.weight = nextWeight
       changed = true
     }
     // 2. 巩固：引用 ≥ 阈值 → 加权（设上限）
@@ -89,7 +103,10 @@ export function runDream(opts = {}) {
       db.metaSet(checkpointKey, e.fp)
     }
   }
-  if (!dryRun) db.metaSet(checkpointKey, '') // 完成清空检查点
+  if (!dryRun) {
+    db.metaSet(checkpointKey, '') // 完成清空检查点
+    db.metaSet('lastDreamAt', new Date(now).toISOString()) // v0.8.0：代谢时间戳（幂等衰减 + 自动代谢判据的唯一事实来源）
+  }
   // 审计记录（dry-run 也记录 PREVIEW）
   for (const it of report.items) {
     if (dryRun) audit('PREVIEW', { op: it.op, fp: it.fp })
@@ -202,6 +219,7 @@ export function runReflect(opts = {}) {
     fs.mkdirSync(dir, { recursive: true })
     reportFile = path.join(dir, stamp.replace(/[^\d]/g, '').slice(0, 12) + '.md')
     writeFile(reportFile, text)
+    db.metaSet('lastReflectAt', new Date().toISOString()) // v0.8.0：反思时间戳（自动反思判据，取代对报告文件 mtime 的依赖）
     audit('REFLECT', { scanned: entries.length, clusters: clusters.length, conflicts: conflicts.length, reportFile })
   }
   return {

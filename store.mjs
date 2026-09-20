@@ -106,8 +106,10 @@ export function scanAllFiles() {
     const walk = (d, rel) => {
       for (const f of fs.readdirSync(d, { withFileTypes: true })) {
         const full = path.join(d, f.name)
-        if (f.isDirectory()) walk(full, path.join(rel, f.name))
-        else if (f.name.endsWith('.md')) {
+        // v0.8.0：跳过同步镜像与反思报告——它们由 bm-sync-mirror.cjs 按条目行格式生成，
+        // 会被 parseEntryLine 当成真实条目误导入（历史遗留的重复来源）。
+        if (f.isDirectory()) { if (f.name !== 'reflections' && f.name !== 'backups') walk(full, path.join(rel, f.name)) }
+        else if (f.name.endsWith('.md') && f.name !== '条目镜像.md') {
           const es = readEntries(full)
           if (es.length) out.push({ layer: path.relative(MEMORY_ROOT, full).replace(/\\/g, '/'), file: full, entries: es })
         }
@@ -256,35 +258,10 @@ export function setPin(fp, pinned) {
   return { ok: true, fp, pinned, text: e.text }
 }
 
-export function findByText(q) {
-  db.openDb()
-  const ql = q.toLowerCase()
-  for (const e of db.allEntries()) {
-    if ((e.text || '').toLowerCase().includes(ql)) return e
-  }
-  return null
-}
-
 // ---------- 备份 ----------
 
-export function backupNow() {
-  const stamp = nowStamp().replace(/[^\d]/g, '').slice(0, 12)
-  const dir = path.join(PATHS.backups, stamp)
-  ensureDirs()
-  fs.mkdirSync(dir, { recursive: true }) // 备份子目录必须存在，copyFileSync 不会自动创建
-  for (const p of [PATHS.hotBehavior, PATHS.hotKnowledge, PATHS.preferences]) {
-    if (fs.existsSync(p)) fs.copyFileSync(p, path.join(dir, path.basename(p)))
-  }
-  if (fs.existsSync(PATHS.auditJson)) fs.copyFileSync(PATHS.auditJson, path.join(dir, 'audit.jsonl'))
-  return dir
-}
-
-// 最近一次备份目录
-export function latestBackup() {
-  if (!fs.existsSync(PATHS.backups)) return null
-  const dirs = fs.readdirSync(PATHS.backups).filter((d) => /^\d{12}$/.test(d)).sort().reverse()
-  return dirs.length ? path.join(PATHS.backups, dirs[0]) : null
-}
+// ---------- 备份（v0.8.0 已移除 backupNow/latestBackup：单轨制后 Markdown 备份不再产生，
+// 它们读的 MEMORY_ROOT/backups 恒为空目录；DB 备份走 db.mjs::backupDb/listBackups） ----------
 
 // ---------- 自动巩固（用进废退）+ 安全删除 ----------
 
@@ -306,6 +283,22 @@ export function removeEntry(fp) {
   db.removeByFp(fp)
   audit('REMOVE', { fp, text: e.text, entry_id: e.entry_id, detail: { backup: bk } })
   return { ok: true, fp, layer: e.layer, text: e.text, backup: bk }
+}
+
+// 取消归档（v0.8.0）：status 由 archived 改回 active，可顺带校准权重。
+// 与 restoreEntry 的分工：restoreEntry 用于「已被删除」的条目（要求主库查无此 fp，从数据库备份读回）；
+// 取消归档用于「行还在、只是 status=archived」的条目。背景：自动 dream 判据失效 + 复合衰减曾把
+// 19 条行为记忆误归档（fp:1fed41ef），需要一条可审计的恢复路径。
+export function unarchiveEntry(fp, opts = {}) {
+  db.openDb()
+  const e = db.getByFp(fp)
+  if (!e) return { ok: false, error: `未找到 [fp:${fp}]` }
+  if (e.status !== 'archived') return { ok: false, error: `[fp:${fp}] 不是归档状态（当前 ${e.status}）` }
+  const want = Number(opts.weight)
+  const weight = Number.isFinite(want) && want > 0 ? want : e.weight
+  db.upsertEntry({ fp, status: 'active', weight })
+  audit('UNARCHIVE', { fp, text: e.text, entry_id: e.entry_id, detail: { from: e.weight, to: weight } })
+  return { ok: true, fp, layer: e.layer, kind: e.kind, from: e.weight, to: weight, text: e.text }
 }
 
 // 单条目回滚：从最近备份库读回被删除的条目（保留元数据，向量置空重算），审计 RESTORE

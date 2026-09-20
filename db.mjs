@@ -41,6 +41,7 @@ export function openDb() {
   const db = new DatabaseSync(dbPath())
   db.exec('PRAGMA journal_mode = WAL')
   db.exec('PRAGMA synchronous = NORMAL')
+  db.exec('PRAGMA busy_timeout = 5000') // v0.8.0：多实例（web + CLI/维护脚本）同库时避免 SQLITE_BUSY 直接抛错
   migrateSchema(db)
   _db = db
   return db
@@ -217,12 +218,6 @@ export function getByFp(fp) {
 }
 
 /** 按 entry_id 读取 */
-export function getById(id) {
-  const db = openDb()
-  const r = db.prepare('SELECT * FROM entries WHERE entry_id = ?').get(id)
-  return r ? fromRow(r) : undefined
-}
-
 /** 查询条目：支持 project/layer/fragment_type/status/关键词/排序/分页 */
 export function listEntries({ projectId, layer, fragmentType, status = 'active', q, limit = 100, offset = 0 } = {}) {
   const db = openDb()
@@ -250,13 +245,12 @@ export function stats() {
   return { total, pinned, layers: byLayer, status: byStatus, auditCount, dbPath: dbPath() }
 }
 
-/** 按指纹删除（物理） */
+/** 按指纹删除（物理）。v0.8.0：不再连带删除审计行——删条目不等于抹掉历史（审计是追溯链） */
 export function removeByFp(fp) {
   const db = openDb()
   const e = getByFp(fp)
   if (!e) return false
   db.prepare('DELETE FROM entries WHERE fp = ?').run(fp)
-  db.prepare('DELETE FROM audit_log WHERE entry_id = ?').run(e.entry_id)
   return true
 }
 
@@ -271,23 +265,15 @@ export function touchEntry(fp, { weightDelta = 0, hitsDelta = 0, accessed = fals
     .run(w, h, accessed ? isoNow() : (e.last_accessed ?? null), fp)
 }
 
-/** 设置/解除记忆钉 */
+/** 设置/解除记忆钉。v0.8.0：不再把 weight 清零（旧实现 pinned 时写 weight=1 →
+ *  一解锁就低于 decayThreshold 被归档；钉住本身已由 runDream 跳过 pinned 保护）。 */
 export function setPinFp(fp, pinned, reason) {
   const db = openDb()
   const e = getByFp(fp)
   if (!e) return false
-  db.prepare('UPDATE entries SET pinned = ?, pin_reason = ?, weight = ? WHERE fp = ?')
-    .run(pinned ? 1 : 0, pinned ? reason ?? null : null, pinned ? 1 : e.weight, fp)
+  db.prepare('UPDATE entries SET pinned = ?, pin_reason = ? WHERE fp = ?')
+    .run(pinned ? 1 : 0, pinned ? reason ?? null : null, fp)
   return true
-}
-
-/** 列出钉住记忆 */
-export function listPinned(projectId) {
-  const db = openDb()
-  if (projectId) {
-    return db.prepare('SELECT * FROM entries WHERE pinned = 1 AND project_id = ? ORDER BY created_at DESC').all(projectId).map(fromRow)
-  }
-  return db.prepare('SELECT * FROM entries WHERE pinned = 1 ORDER BY created_at DESC').all().map(fromRow)
 }
 
 /** 全部活跃条目（供代谢/反思/迁移用） */

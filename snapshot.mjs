@@ -11,7 +11,7 @@ import {
   PATHS, estimateTokens, detectConflict, CFG, prefsText,
 } from './shared.mjs'
 import {
-  isSummaryPending, getSummarySid, getLastTurnEnd, setLastTurnEnd, markSummaryPending, clearSummaryPending,
+  isSummaryPending, getLastTurnEnd, setLastTurnEnd, markSummaryPending, clearSummaryPending,
 } from './session-state.mjs'
 
 // ---------- 冻结快照（会话启动注入 system prompt；注册即冻结） ----------
