@@ -12,7 +12,7 @@ import React from 'react'
 import { createRoot } from 'react-dom/client'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const CLIENT_SRC = path.join(__dirname, '..', 'client.js')
+const CLIENT_SRC = path.join(__dirname, '..', 'lib', 'client.js')
 let failures = 0
 function check(label, cond, extra = '') {
   if (cond) { console.log('  ok   ' + label) }
