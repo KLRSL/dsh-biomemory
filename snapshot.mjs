@@ -161,9 +161,11 @@ export function renderSnapshot() {
 export function sessionSummarySectionText() {
   // 无待沉淀标记 → 不注入
   if (!isSummaryPending()) return ''
-  // 距上次 turn/end 超过 5 分钟（用户在另一处、或已沉淀）→ 不再催促
+  // 距上次 turn/end 超过窗口（默认 60 分钟，v0.8.0 起可配；旧实现硬编码 5 分钟，
+  // 用户离开久一点提醒就被静默丢掉）→ 不再催促
+  const windowMs = Math.max(1, Number(CFG.sinkWindowMinutes) || 60) * 60 * 1000
   const last = getLastTurnEnd()
-  if (last > 0 && Date.now() - last > 5 * 60 * 1000) {
+  if (last > 0 && Date.now() - last > windowMs) {
     clearSummaryPending()
     return ''
   }
@@ -171,8 +173,10 @@ export function sessionSummarySectionText() {
   return [
     '## 本轮对话已结束 · 请沉淀值得长期记住的内容',
     '请回顾刚刚结束的这轮对话，判断是否有值得写入长期记忆的：用户偏好/纠正/项目决策/踩坑教训。',
+    '**主动沉淀是默认行为**：不需要用户开口要求；只要本轮出现了新的偏好、决策、纠正或教训，就应当写入。',
     '若有，请用 `memory` 工具写入（track=user 存偏好/知识，track=agent 存行为/教训），做到严格去重——',
-    '与已有记忆重复或可用代码/文件重新推导的不要写。若本轮无可沉淀内容，忽略即可。',
+    '与已有记忆重复或可用代码/文件重新推导的不要写（近重复会被自动合并，不必担心重复写入）。',
+    '若本轮确实无可沉淀内容，忽略即可。',
   ].join('\n')
 }
 

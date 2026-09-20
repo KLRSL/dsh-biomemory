@@ -38,6 +38,8 @@ export const DEFAULTS = {
   nearDuplicateThreshold: 0.7, // v0.8.0：写入去重——与已有同类条目的中文 bigram Jaccard ≥ 此值时不再新增（0=关闭；
                                // 实测「换了说法的同一件事」约 0.7~0.8，完全改写才会低于 0.6）
   nearDuplicateAction: 'merge', // v0.8.0：命中近重复怎么办——merge=合并进已有条目（追加「补充·日期」并提权，借鉴 @zheexinn/dsh-memory）/ skip=只提示不写
+  sinkWindowMinutes: 60,  // v0.8.0：轮次结束后的「请沉淀」提醒有效窗口（分钟）。旧实现硬编码 5 分钟——
+                          // 用户离开超过 5 分钟再回来，提醒会被静默丢弃，于是「只有被明确要求时才写入」
 }
 
 // 冲突阈值从配置读取（模块加载时为默认，apply 时更新）

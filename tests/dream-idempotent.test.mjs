@@ -93,6 +93,19 @@ test('快照不注入归档条目（归档 = 退出注入，避免静默下架�
   assert.ok(!renderSnapshot().includes('ZZZARCHIVEDZZZ'))
 })
 
+test('沉淀提醒窗口可配（默认 60 分钟）：窗口内提醒，超窗口丢弃', async () => {
+  const snap = await import('../snapshot.mjs')
+  const ss = await import('../session-state.mjs')
+  ss.markSummaryPending('s1')
+  ss.setLastTurnEnd(Date.now() - 30 * 60 * 1000, 's1')
+  const t = snap.sessionSummarySectionText()
+  assert.ok(t.includes('主动沉淀是默认行为'), '窗口内应注入「主动沉淀」提醒')
+  ss.markSummaryPending('s1')
+  ss.setLastTurnEnd(Date.now() - 90 * 60 * 1000, 's1')
+  assert.equal(snap.sessionSummarySectionText(), '', '超窗口应丢弃（并清标记）')
+  assert.equal(ss.isSummaryPending(), false)
+})
+
 test('写入去重（记忆原子化·merge 模式）：近重复合并进已有条目并提权，不产生碎片', () => {
   // 注意：精确指纹只看「前 20 字」，两条记忆若开头 20 字相同会先被判成 duplicate；
   // 近重复检测补的正是「换了说法/换了开头」的那一类。
