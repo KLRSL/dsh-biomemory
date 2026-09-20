@@ -1,0 +1,25 @@
+# 统一行尾与文本判定：仓库内一律存 LF，检出也保持 LF（跨平台一致，避免 diff 被 CRLF 污染）
+* text=auto eol=lf
+
+*.mjs  text eol=lf
+*.js   text eol=lf
+*.cjs  text eol=lf
+*.ts   text eol=lf
+*.json text eol=lf
+*.md   text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.css  text eol=lf
+*.html text eol=lf
+
+# 二进制：不做行尾转换，diff 视作二进制
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.ico    binary
+*.webp   binary
+*.zip    binary
+*.sqlite binary
+*.db     binary
+*.exe    binary
