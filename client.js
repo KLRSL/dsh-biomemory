@@ -407,12 +407,28 @@ window.__ModuleLoader__.load({
 			const [editingFp, setEditingFp] = react.useState(null);
 			const [editingText, setEditingText] = react.useState("");
 			const [lastRemoved, setLastRemoved] = react.useState(null);
-			const loadStatus = react.useCallback(() => {
+			// v0.8.0：统一请求生命周期——所有面板请求都登记在册，组件卸载时统一 abort。
+			// 旧实现只有 loadStatus 自带 AbortController，其余在途请求在面板关闭后仍会 setState（React 警告 + 空转）。
+			const inflightRef = react.useRef(new Set());
+			const apiFetch = react.useCallback((url, init = {}) => {
 				const controller = new AbortController();
-				fetch("/biomemory/api/status", {
-					credentials: "same-origin",
-					signal: controller.signal
-				}).then(async (response) => {
+				inflightRef.current.add(controller);
+				return window.fetch(url, { credentials: "same-origin", ...init, signal: controller.signal })
+					.finally(() => { inflightRef.current.delete(controller); });
+			}, []);
+			react.useEffect(() => () => {
+				for (const c of inflightRef.current) {
+					try { c.abort(); } catch (error) { /* 已结束的请求忽略 */ }
+				}
+			}, []);
+			// v0.8.0：切换 tab 时清掉编辑态——旧实现 editingFp/editingText 被知识库与反思页共用，
+			// 在一个页签点了「编辑」再切到另一个页签，会看到另一条记忆的编辑框（跨 tab 串扰）。
+			react.useEffect(() => {
+				setEditingFp(null);
+				setEditingText("");
+			}, [tab]);
+			const loadStatus = react.useCallback(() => {
+				return apiFetch("/biomemory/api/status", {}).then(async (response) => {
 					if (!response.ok) throw new Error("status unavailable");
 					const data = await response.json();
 					if (!data?.ok) throw new Error("status unavailable");
@@ -424,9 +440,9 @@ window.__ModuleLoader__.load({
 					setFallback(data.config?.approvalFallback || "auto");
 					setStatus({ kind: "ready", value: data });
 				}).catch(() => setStatus({ kind: "error" }));
-				return () => controller.abort();
 			}, []);
-			react.useEffect(() => loadStatus(), [loadStatus]);
+			// v0.8.0：effect 里不能再直接把 loadStatus() 的返回值（Promise）当作 cleanup 返回
+			react.useEffect(() => { loadStatus(); }, [loadStatus]);
 			// 挂载时给 .bm-page 打上 data-dsh-theme，并实时跟随主题变化：
 			// ① 系统主题（matchMedia）② DSH 运行中切换主题（data-ds-dark-theme 属性变化，MutationObserver）
 			react.useEffect(() => {
@@ -467,7 +483,7 @@ window.__ModuleLoader__.load({
 				for (const key of CONFIG_KEYS) { const value = configText[key]; if (value !== void 0 && value !== "") body[key] = Number(value); }
 				body.petEndpoint = petEndpoint.trim() !== "" ? petEndpoint.trim() : null;
 				body.approvalFallback = fallback === "deny" ? "deny" : "auto";
-				fetch("/biomemory/api/config", {
+				apiFetch("/biomemory/api/config", {
 					method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
 					body: JSON.stringify(body)
 				}).then(async (response) => {
@@ -482,7 +498,7 @@ window.__ModuleLoader__.load({
 			const resetConfig = () => {
 				if (!window.confirm(t.resetConfirm)) return;
 				setSaveState({ kind: "saving" });
-				fetch("/biomemory/api/config", {
+				apiFetch("/biomemory/api/config", {
 					method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
 					body: JSON.stringify({ reset: true })
 				}).then(async (response) => {
@@ -500,7 +516,7 @@ window.__ModuleLoader__.load({
 			};
 			const runDream = (dryRun) => {
 				setDream({ kind: "running", dryRun });
-				fetch("/biomemory/api/dream", {
+				apiFetch("/biomemory/api/dream", {
 					method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
 					body: JSON.stringify({ dryRun })
 				}).then(async (response) => {
@@ -513,7 +529,7 @@ window.__ModuleLoader__.load({
 			};
 			const runAudit = () => {
 				setAudit({ kind: "loading" });
-				fetch("/biomemory/api/audit?sinceDays=30", { credentials: "same-origin" })
+				apiFetch("/biomemory/api/audit?sinceDays=30", { credentials: "same-origin" })
 					.then(async (response) => {
 						if (!response.ok) throw new Error("audit failed");
 						const data = await response.json();
@@ -529,7 +545,7 @@ window.__ModuleLoader__.load({
 				if (query) params.set("q", query);
 				if (lay) params.set("layer", lay);
 				params.set("mode", searchMode);
-				fetch(`/biomemory/api/entries?${params.toString()}`, { credentials: "same-origin" })
+				apiFetch(`/biomemory/api/entries?${params.toString()}`, { credentials: "same-origin" })
 					.then(async (response) => {
 						if (!response.ok) throw new Error("entries failed");
 						const data = await response.json();
@@ -540,7 +556,7 @@ window.__ModuleLoader__.load({
 			const entryOp = (fp, op, text) => {
 				const body = { fp };
 				if (text !== void 0) body.text = text;
-				fetch(`/biomemory/api/entries/${op}`, {
+				apiFetch(`/biomemory/api/entries/${op}`, {
 					method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
 					body: JSON.stringify(body)
 				}).then(async (response) => {
@@ -563,7 +579,7 @@ window.__ModuleLoader__.load({
 			// 反思页裁决冲突：就地编辑保存 → 从冲突列表移除（改掉冲突内容后不再冲突）
 			const resolveConflict = (fp, text) => {
 				if (!String(text || "").trim()) return;
-				fetch("/biomemory/api/entries/update", {
+				apiFetch("/biomemory/api/entries/update", {
 					method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
 					body: JSON.stringify({ fp, text: String(text).trim() })
 				}).then(async (response) => {
@@ -581,7 +597,7 @@ window.__ModuleLoader__.load({
 			};
 			// 反思页删除冲突条目（仅限潜在冲突列表）：先备份可回滚，删除后从列表移除
 			const removeConflict = (fp, text) => {
-				fetch("/biomemory/api/entries/remove", {
+				apiFetch("/biomemory/api/entries/remove", {
 					method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
 					body: JSON.stringify({ fp })
 				}).then(async (response) => {
@@ -602,7 +618,7 @@ window.__ModuleLoader__.load({
 			const undoRemove = () => {
 				if (!lastRemoved) return;
 				const fp = lastRemoved.fp;
-				fetch("/biomemory/api/entries/restore", {
+				apiFetch("/biomemory/api/entries/restore", {
 					method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
 					body: JSON.stringify({ fp })
 				}).then(async (response) => {
@@ -621,7 +637,7 @@ window.__ModuleLoader__.load({
 			};
 			const runReflect = (dryRun) => {
 				setReflect({ kind: "running", dryRun });
-				fetch("/biomemory/api/reflect", {
+				apiFetch("/biomemory/api/reflect", {
 					method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
 					body: JSON.stringify({ dryRun })
 				}).then(async (response) => {

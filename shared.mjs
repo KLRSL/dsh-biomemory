@@ -35,8 +35,9 @@ export const DEFAULTS = {
   autoReflectDays: 3,     // 启动时距上次反思 ≥ 此天数 → 自动执行（0=关闭）
   conflictOverlap: 3,     // 冲突仲裁：行为与单条偏好的专有双字重叠阈值（P0-003 二次验证）
   preloadEmbeddings: false, // v0.8.0：启动时是否预建向量索引（旧行为=每次启动强制加载 ~24MB 嵌入模型；默认关）
-  nearDuplicateThreshold: 0.7, // v0.8.0：写入去重——与已有同类条目的中文 bigram Jaccard ≥ 此值时不再新增，改为提示合并（0=关闭；
+  nearDuplicateThreshold: 0.7, // v0.8.0：写入去重——与已有同类条目的中文 bigram Jaccard ≥ 此值时不再新增（0=关闭；
                                // 实测「换了说法的同一件事」约 0.7~0.8，完全改写才会低于 0.6）
+  nearDuplicateAction: 'merge', // v0.8.0：命中近重复怎么办——merge=合并进已有条目（追加「补充·日期」并提权，借鉴 @zheexinn/dsh-memory）/ skip=只提示不写
 }
 
 // 冲突阈值从配置读取（模块加载时为默认，apply 时更新）
@@ -237,6 +238,21 @@ export function bigramJaccard(a, b) {
   let inter = 0
   for (const g of A) if (B.has(g)) inter++
   return inter / (A.size + B.size - inter)
+}
+
+// 写入去重实际使用的相似度：短文本上 Jaccard 偏严格（改几个字就掉到 0.6 以下），
+// 因此在「两条长度相近（短/长 ≥ 0.6）」时取 Jaccard 与包含度 inter/min(|A|,|B|) 的较大者。
+// 长度差太大时仍用 Jaccard，避免「短句被长条目完全包含」被误判成重复。
+export function bigramSimilarity(a, b) {
+  const A = zhBigrams(String(a || ''))
+  const B = zhBigrams(String(b || ''))
+  if (!A.size || !B.size) return 0
+  let inter = 0
+  for (const g of A) if (B.has(g)) inter++
+  const jaccard = inter / (A.size + B.size - inter)
+  const ratio = Math.min(A.size, B.size) / Math.max(A.size, B.size)
+  if (ratio < 0.6) return jaccard
+  return Math.max(jaccard, inter / Math.min(A.size, B.size))
 }
 
 export function detectConflict(entry, prefsText) {

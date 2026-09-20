@@ -93,21 +93,38 @@ test('快照不注入归档条目（归档 = 退出注入，避免静默下架�
   assert.ok(!renderSnapshot().includes('ZZZARCHIVEDZZZ'))
 })
 
-test('写入去重（记忆原子化）：高度相似条目不入库，返回可合并的已有指纹', () => {
-  // 注意：精确指纹只看「前 20 字」，所以两条记忆若开头 20 字相同会先被判成 duplicate；
+test('写入去重（记忆原子化·merge 模式）：近重复合并进已有条目并提权，不产生碎片', () => {
+  // 注意：精确指纹只看「前 20 字」，两条记忆若开头 20 字相同会先被判成 duplicate；
   // 近重复检测补的正是「换了说法/换了开头」的那一类。
   const first = store.writeEntry({ track: 'agent', text: '写入去重测试：dsh 启动前必须检查 3080 端口，防止重复拉起。' })
   assert.equal(first.ok, true)
   const again = store.writeEntry({ track: 'agent', text: '写入去重校验：dsh 启动前必须检查 3080 端口，防止重复拉起。' })
-  assert.equal(again.skipped, true)
-  assert.equal(again.reason, 'near-duplicate')
-  assert.equal(again.similar.fp, first.fp)
+  assert.equal(again.merged, true)
+  assert.equal(again.reason, 'near-duplicate-merged')
+  assert.equal(again.fp, first.fp)
   assert.ok(again.similar.score >= 0.7, `相似度应达标，实际 ${again.similar && again.similar.score}`)
-  assert.equal(auditCount('WRITE-SKIP'), 1)
+  const e = db.getByFp(first.fp)
+  assert.ok(e.text.includes('【补充·'), '合并后应带「补充·日期」标记')
+  assert.equal(e.weight, 11, '合并应提权 +1')
+  assert.equal(auditCount('WRITE-MERGE'), 1)
+  assert.equal(db.allEntries().filter((x) => x.fragment_type === 'lesson').length, 1, '不应新增碎片条目')
   // 不同主题仍正常写入
   const other = store.writeEntry({ track: 'agent', text: '码头进度条要同时支持百分比与分数两种写法（来自另一主题的独立条目）。' })
   assert.equal(other.ok, true)
   assert.equal(other.skipped, undefined)
+  assert.equal(other.merged, undefined)
+})
+
+test('写入去重（skip 模式）：nearDuplicateAction=skip 时只提示、不写库', () => {
+  const first = store.writeEntry({ track: 'agent', text: '跳过模式测试：码头横幅在贴顶时要翻到下方显示。' })
+  I.setConfig({ nearDuplicateAction: 'skip' })
+  const again = store.writeEntry({ track: 'agent', text: '跳过模式校验：码头横幅在贴顶时需要翻到下方显示。' })
+  assert.equal(again.skipped, true)
+  assert.equal(again.reason, 'near-duplicate')
+  assert.equal(again.similar.fp, first.fp)
+  assert.equal(auditCount('WRITE-SKIP'), 1)
+  assert.equal(db.getByFp(first.fp).text.includes('【补充·'), false, 'skip 模式不应改写已有条目')
+  I.setConfig({ nearDuplicateAction: 'merge' }) // 还原默认
 })
 
 test('restoreEntry 保留原 entry_id（审计关联不再悬空）', () => {

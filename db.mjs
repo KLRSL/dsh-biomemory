@@ -399,7 +399,16 @@ export function metaSet(k, v) {
 /** compact 前自动备份 .db（保留最近 MAX_BACKUPS 次） */
 export function backupDb() {
   const db = openDb()
-  db.exec('PRAGMA wal_checkpoint(TRUNCATE)')
+  // v0.8.0：checkpoint 结果要检查——busy≠0 说明还有读者/写者，TRUNCATE 没能把 WAL 全部并回主库，
+  // 此时直接 copyFile 会得到「不含最新写入」的备份（旧实现静默接受）。
+  let ck = null
+  try {
+    const row = db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get()
+    ck = row ? { busy: Number(row.busy ?? 0), log: Number(row.log ?? 0), checkpointed: Number(row.checkpointed ?? 0) } : null
+    if (ck && ck.busy !== 0) console.warn(`[dsh-biomemory] wal_checkpoint busy=${ck.busy}：备份可能不含最新 WAL 内容`)
+  } catch (err) {
+    console.warn('[dsh-biomemory] wal_checkpoint 失败：', err instanceof Error ? err.message : String(err))
+  }
   const dir = backupDir()
   fs.mkdirSync(dir, { recursive: true })
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19) + '-' + String(Date.now() % 1000).padStart(3, '0')
@@ -409,6 +418,18 @@ export function backupDb() {
   let target = `${base}.db`
   for (let n = 2; fs.existsSync(target); n += 1) target = `${base}-${n}.db`
   fs.copyFileSync(dbPath(), target)
+  // v0.8.0：备份可用性自检——能打开且条目数对得上才算合格备份（不合格就删掉并报错，
+  // 避免留下一个「看起来有备份、实际不能用」的文件）。
+  try {
+    const src = db.prepare('SELECT COUNT(*) n FROM entries').get().n
+    const c = new DatabaseSync(target, { readOnly: true })
+    const dst = c.prepare('SELECT COUNT(*) n FROM entries').get().n
+    c.close()
+    if (Number(src) !== Number(dst)) throw new Error(`条目数不一致（主库 ${src} / 备份 ${dst}）`)
+  } catch (err) {
+    try { fs.unlinkSync(target) } catch { /* ignore */ }
+    throw new Error(`备份自检失败（已删除该文件）：${err instanceof Error ? err.message : String(err)}`)
+  }
   // 清理旧备份
   const backups = fs.readdirSync(dir).filter((f) => f.endsWith('.db')).sort()
   while (backups.length > MAX_BACKUPS) {
@@ -424,14 +445,25 @@ export function listBackups() {
   return fs.readdirSync(dir).filter((f) => f.endsWith('.db')).sort().reverse()
 }
 
-/** 从备份恢复（返回恢复到的路径） */
+/** 从备份恢复（返回恢复到的路径）。
+ *  v0.8.0 加固：①覆盖前先给当前库留一份 pre-restore 快照；②用「临时文件 + rename」原子替换，
+ *  不再原地 copyFile（他进程持连接时原地覆盖可能留下半截文件）；③清掉旧的 -wal/-shm，
+ *  否则残留 WAL 会被当成新库的前滚日志导致读到脏数据。 */
 export function restoreLatestBackup() {
   const backups = listBackups()
   if (backups.length === 0) return null
   const src = path.join(backupDir(), backups[0])
-  // 关闭当前连接再覆盖
+  // 关闭当前连接再替换
   if (_db) { try { _db.close() } catch { /* ignore */ } _db = null }
-  fs.copyFileSync(src, dbPath())
+  const target = dbPath()
+  const safety = `${target}.pre-restore-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}`
+  if (fs.existsSync(target)) fs.copyFileSync(target, safety)
+  const tmp = `${target}.restore-tmp-${process.pid}`
+  fs.copyFileSync(src, tmp)
+  fs.renameSync(tmp, target)
+  for (const sidecar of [`${target}-wal`, `${target}-shm`]) {
+    if (fs.existsSync(sidecar)) { try { fs.unlinkSync(sidecar) } catch { /* ignore */ } }
+  }
   openDb()
   return src
 }

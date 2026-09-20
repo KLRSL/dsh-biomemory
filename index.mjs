@@ -177,7 +177,15 @@ function makeMemoryTool(ctx) {
         const g = await gateWrite(ctx, { track, text: text.trim(), agent: exec.agent, callId: exec.callId, signal: exec.signal })
         if (!g.approved) return { ok: false, error: `写入未获批准（${g.outcome || 'denied'}）——重要记忆需人工审批（可设置 approvalFallback=auto 自动保存）` }
         const r = writeEntry({ track, text: text.trim(), sessionId, approved: g.mode === 'ask', mode: g.mode, source })
-        // v0.8.0：近似重复（写入去重）——不新增，直接告诉模型改为 update 合并到已有条目
+        // v0.8.0：近似重复（写入去重）——已自动合并进已有条目，或（skip 模式）只提示不写
+        if (r.merged) {
+          return {
+            ok: true,
+            ...r,
+            mode: g.mode,
+            note: `已合并进已有条目 [fp:${r.fp}]（相似度 ${r.similar.score}，追加「补充·日期」并提权）——未新增碎片条目。`,
+          }
+        }
         if (r.skipped && r.reason === 'near-duplicate') {
           return {
             ok: true,

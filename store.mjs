@@ -16,7 +16,7 @@ import * as db from './db.mjs'
 import * as embed from './embed.mjs'
 import {
   MEMORY_ROOT, PATHS, readFile, writeFile, appendFile, nowStamp, isoNow, tsToIso, fingerprint,
-  isImportant, detectConflict, bigramJaccard, CFG, ensureDirs, audit as sharedAudit, dbgLog,
+  isImportant, detectConflict, bigramSimilarity, CFG, ensureDirs, audit as sharedAudit, dbgLog,
 } from './shared.mjs'
 import { clearSummaryPending } from './session-state.mjs'
 import { petNotify } from './notify.mjs'
@@ -230,11 +230,22 @@ export function writeEntry({ track, text, sessionId, approved, mode, source }) {
     let best = null
     for (const e of db.allEntries()) {
       if (e.fragment_type !== fragmentType) continue
-      const score = bigramJaccard(text, e.text)
-      if (!best || score > best.score) best = { fp: e.fp, score, text: String(e.text || '') }
+      const score = bigramSimilarity(text, e.text)
+      if (!best || score > best.score) best = { fp: e.fp, score, text: String(e.text || ''), weight: e.weight, entry_id: e.entry_id }
     }
     if (best && best.score >= nearThr) {
       const score = Math.round(best.score * 1000) / 1000
+      // v0.8.0：可选「自动合并」——借鉴 @zheexinn/dsh-memory 的 merge-on-write（同一件事合并进已有条目
+      // 而不是新增，顺带提权）。默认 merge；置 nearDuplicateAction='skip' 则只提示、不写。
+      if (String(CFG.nearDuplicateAction) === 'merge') {
+        const merged = `${best.text} ｜ 【补充·${new Date().toISOString().slice(0, 10)}】${text.trim()}`
+        if (merged.length <= 4000) { // 合并后过长的（>4000 字）退回 skip，避免单条无限膨胀
+          const weight = Math.min(Number(CFG.weightCap) || 20, Number(best.weight || 0) + 1)
+          db.upsertEntry({ fp: best.fp, text: merged, weight })
+          audit('WRITE-MERGE', { fp: best.fp, text: text.trim(), entry_id: best.entry_id, detail: { score, fromLen: best.text.length, toLen: merged.length, weight } })
+          return { ok: true, merged: true, reason: 'near-duplicate-merged', fp: best.fp, similar: { fp: best.fp, score, text: best.text.slice(0, 200) } }
+        }
+      }
       audit('WRITE-SKIP', { fp: best.fp, text: text.trim(), detail: { reason: 'near-duplicate', score, track } })
       return { ok: true, skipped: true, reason: 'near-duplicate', similar: { fp: best.fp, score, text: best.text.slice(0, 200) } }
     }
