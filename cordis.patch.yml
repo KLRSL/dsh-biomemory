@@ -1,4 +1,4 @@
 # dsh-biomemory bundle patch: mount the bio-mimetic memory plugin.
 - insert:
-    - id: biomemory
+    - id: dsh-biomemory
       name: dsh-biomemory
