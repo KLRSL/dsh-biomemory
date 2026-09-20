@@ -55,6 +55,7 @@
     "gate.mjs",
     "notify.mjs",
     "mirror.mjs",
+    "extract.mjs",
     "session-state.mjs",
     "lib",
     "cordis.patch.yml",

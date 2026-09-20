@@ -139,12 +139,15 @@ export function buildExtractUserText(transcript) {
 export async function runExtract(deps, opts = {}) {
   const maxChars = Number(opts.maxChars) > 500 ? Number(opts.maxChars) : 12000
   const minConfidence = Number.isFinite(Number(opts.minConfidence)) ? Number(opts.minConfidence) : 0.6
-  const report = { transcriptChars: 0, candidates: 0, kept: 0, droppedLow: 0, droppedDup: 0, written: 0, merged: 0, skipped: 0, failed: 0, items: [], dryRun: opts.dryRun === true }
+  const report = { transcriptChars: 0, candidates: 0, kept: 0, droppedLow: 0, droppedDup: 0, written: 0, merged: 0, skipped: 0, failed: 0, items: [], dryRun: opts.dryRun === true, transcript: '' }
 
   const messages = await deps.getMessages()
   const transcript = buildTranscript(messages, { maxChars })
   report.transcriptChars = transcript.length
+  report.transcript = transcript
   if (!transcript) { report.note = '没有可抽取的对话内容（会话为空或全为系统消息）'; return report }
+  // v0.8.1：「只预览」模式——把将要发送的 transcript 回给 UI，**不调用模型、零 token**
+  if (opts.transcriptOnly === true) { report.previewOnly = true; return report }
 
   const raw = await deps.callModel(EXTRACT_SYSTEM, buildExtractUserText(transcript))
   const cands = parseCandidates(raw)

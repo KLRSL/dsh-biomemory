@@ -42,12 +42,16 @@ import { renderSnapshot, sessionSummarySectionText, handleSessionEvent } from '.
 import { gateWrite, selfHeal } from './gate.mjs'
 import { setPetEndpoint, getPetEndpoint, petNotify } from './notify.mjs'
 import { scheduleMirrorSync } from './mirror.mjs'
+import { runExtract } from './extract.mjs'
 import {
   markSummaryPending, clearSummaryPending, isSummaryPending,
   getLastTurnEnd, setLastTurnEnd,
 } from './session-state.mjs'
 
 export const inject = ['tools', 'systemPrompt']
+
+// v0.8.1：按需抽取持有的宿主服务上下文（在 ctx.inject(['sessions','llm']) 的回调里赋值）
+let extractCtx = null
 
 // ---------- 读取请求体（Web API 用） ----------
 // v0.8.0：加大小上限（默认 1 MiB，可用 DSH_BIOMEMORY_BODY_LIMIT 覆盖）——旧实现无限缓冲，
@@ -411,6 +415,52 @@ function registerMemoryCommand(ctx) {
   })
 }
 
+// ---------- 按需抽取（v0.8.1，用户拍板：按钮触发、不做后台自动抽取以省 token） ----------
+// 数据来源走官方契约：ctx.sessions.get(id).deriveMessages()（模型可见历史，不碰会话日志文件）；
+// 模型调用走官方 LLM 服务 ctx.llm.stream({provider, model, messages})（复用 DSH 现有提供方）。
+// 提取到的候选交给 store.writeEntry —— 与手工写入共用同一套指纹去重、近重复合并与审计。
+async function runExtractRequest({ svcCtx, sessionId, transcriptOnly, dryRun, maxChars, minConfidence }) {
+  if (!svcCtx || !svcCtx.sessions) throw new Error('抽取不可用：宿主未提供 sessions 服务')
+  const sessions = svcCtx.sessions
+  let session = sessionId && typeof sessions.get === 'function' ? sessions.get(sessionId) : null
+  if (!session && typeof sessions.list === 'function') {
+    const list = sessions.list() || []
+    session = list.length ? list[list.length - 1] : null
+  }
+  if (!session) throw new Error('找不到可抽取的会话（当前没有活动会话）')
+  const provider = String(CFG.extractProvider || '').trim()
+  const model = String(CFG.extractModel || '').trim()
+  const needModel = !transcriptOnly && !dryRun
+  if (needModel && (!provider || !model)) {
+    throw new Error('未配置抽取模型：请在设置页填写 extractProvider 与 extractModel（可先点「预览」看将要发送的内容，不花 token）')
+  }
+  const deps = {
+    getMessages: async () => (typeof session.deriveMessages === 'function' ? session.deriveMessages() : []),
+    callModel: async (system, user) => {
+      if (!svcCtx.llm || typeof svcCtx.llm.stream !== 'function') throw new Error('抽取不可用：宿主未提供 llm 服务')
+      const messages = [
+        { role: 'system', content: [{ type: 'text', text: system }] },
+        { role: 'user', content: [{ type: 'text', text: user }] },
+      ]
+      const out = []
+      for await (const chunk of svcCtx.llm.stream({ provider, model, messages })) {
+        if (!chunk) continue
+        // 契约：分片为 token 级增量，最后恰好一个 finish；失败以 error/aborted 终止
+        if (chunk.kind === 'error' || chunk.kind === 'aborted') {
+          throw new Error(`模型调用失败：${chunk.failure?.code || chunk.failure?.message || chunk.kind}`)
+        }
+        if (chunk.kind === 'text-delta' && typeof chunk.text === 'string') out.push(chunk.text)
+        if (chunk.kind === 'finish') break
+      }
+      return out.join('')
+    },
+    write: (args) => writeEntry({ ...args, sessionId: session.id }),
+    audit: (action, payload) => audit(action, payload),
+  }
+  const report = await runExtract(deps, { maxChars, minConfidence, dryRun, transcriptOnly })
+  return { ...report, sessionId: session.id, transcript: String(report.transcript || '').slice(0, 4000) }
+}
+
 // ---------- 插件挂载 ----------
 
 export function apply(ctx, config = {}) {
@@ -430,6 +480,9 @@ export function apply(ctx, config = {}) {
   setPetEndpoint(typeof CFG.petEndpoint === 'string' ? CFG.petEndpoint : null)
   selfHeal()
   dbgLog('=== apply 执行 ===')
+
+  // v0.8.1：按需抽取要用到的宿主服务——懒注入，服务缺失时接口返回明确错误而不是崩
+  ctx.inject(['sessions', 'llm'], (svcCtx) => { extractCtx = svcCtx })
 
   // v0.8.0：向量索引改为**真懒加载**——默认不在启动时预建（旧实现在 apply 后 100ms 强制
   // ensureVectors，等于每次 DSH 启动都要加载 ~24MB onnx 模型并初始化 onnxruntime）。
@@ -516,7 +569,7 @@ export function apply(ctx, config = {}) {
           if (req.method === 'POST' && p === '/config') {
             let body = {}
             try { body = JSON.parse(await readBody(req)) } catch { /* ignore */ }
-            const allowed = ['halfLifeDays', 'decayThreshold', 'consolidateThreshold', 'weightCap', 'hotTokenLimit', 'maxQueryResults', 'approvalFallback', 'autoDreamDays', 'autoReflectDays', 'nearDuplicateThreshold', 'nearDuplicateAction', 'sinkWindowMinutes', 'preloadEmbeddings', 'petEndpoint']
+            const allowed = ['halfLifeDays', 'decayThreshold', 'consolidateThreshold', 'weightCap', 'hotTokenLimit', 'maxQueryResults', 'approvalFallback', 'autoDreamDays', 'autoReflectDays', 'nearDuplicateThreshold', 'nearDuplicateAction', 'sinkWindowMinutes', 'preloadEmbeddings', 'extractProvider', 'extractModel', 'extractMaxChars', 'extractMinConfidence', 'petEndpoint']
             if (body.reset === true) {
               try { fs.unlinkSync(PATHS.config) } catch { /* ignore */ }
               setConfig({ ...DEFAULTS })
@@ -610,6 +663,23 @@ export function apply(ctx, config = {}) {
             if (!body.fp) return send(400, { ok: false, error: 'fp 必填' })
             const r = unarchiveEntry(body.fp, body.weight !== undefined ? { weight: Number(body.weight) } : {})
             return r.ok ? send(200, { ok: true, fp: r.fp, weight: r.to }) : send(404, r)
+          }
+          if (req.method === 'POST' && p === '/extract') {
+            let body = {}
+            try { body = JSON.parse(await readBody(req)) } catch { /* ignore */ }
+            try {
+              const report = await runExtractRequest({
+                svcCtx: extractCtx,
+                sessionId: body.sessionId,
+                transcriptOnly: body.transcriptOnly === true,
+                dryRun: body.dryRun === true,
+                maxChars: Number(body.maxChars) || CFG.extractMaxChars,
+                minConfidence: Number.isFinite(Number(body.minConfidence)) ? Number(body.minConfidence) : CFG.extractMinConfidence,
+              })
+              return send(200, { ok: true, report })
+            } catch (err) {
+              return send(400, { ok: false, error: err instanceof Error ? err.message : String(err) })
+            }
           }
           if (req.method === 'POST' && p === '/entries/pin') {
             let body = {}
