@@ -1,9 +1,9 @@
 // ============================================================================
 // dsh-biomemory · 镜像同步挂载（mirror.mjs）
 //
-// 作用：代谢/反思等「批量改动记忆」的操作结束后，异步调用外部维护脚本
-// <local>\tools\bm-sync-mirror.cjs，把 SQLite 重新导出成 <local>\memory 下的
-// 两份人类可读镜像（preferences.md + longterm\条目镜像.md）。
+// 作用：代谢/反思等「批量改动记忆」的操作结束后，异步调用**外部维护脚本**，
+// 把 SQLite 重新导出成人类可读镜像（<MEMORY_ROOT>/preferences.md +
+// <MEMORY_ROOT>/longterm/条目镜像.md）。脚本由使用者自备，不在本插件仓库内。
 //
 // 为什么由外部脚本做、而不是插件自己写 Markdown（关键设计约束）：
 //   v0.6.4 单轨制的核心决定就是「SQLite 唯一事实源，插件不再写 Markdown」。
@@ -21,7 +21,7 @@ import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { dbgLog } from './shared.mjs'
 
-// 本机脚本默认位置：<local>\tools\bm-sync-mirror.cjs
+// 脚本位置：DSH_BIOMEMORY_MIRROR_SCRIPT 优先；未设置时按「插件目录向上两级/tools/bm-sync-mirror.cjs」解析
 const PLUGIN_DIR = path.dirname(fileURLToPath(import.meta.url))
 
 /** 惰性求值（每次调用时读环境变量）——不要提到模块顶层常量：
