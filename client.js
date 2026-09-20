@@ -456,7 +456,8 @@ window.__ModuleLoader__.load({
 				return () => {
 					for (const fn of cleanups) fn();
 				};
-			});
+				// v0.8.0：补依赖数组——旧实现每次渲染都重建 matchMedia 监听与 MutationObserver
+			}, []);
 			// 操作失败提示（删除/编辑/锁定等）：不再静默 —— 失败时给出可见反馈
 			const [opError, setOpError] = react.useState(null);
 			const failOp = (op) => setOpError([op]);

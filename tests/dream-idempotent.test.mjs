@@ -92,3 +92,36 @@ test('快照不注入归档条目（归档 = 退出注入，避免静默下架�
   db.upsertEntry({ fp, status: 'archived' })
   assert.ok(!renderSnapshot().includes('ZZZARCHIVEDZZZ'))
 })
+
+test('restoreEntry 保留原 entry_id（审计关联不再悬空）', () => {
+  const { fp } = store.writeEntry({ track: 'agent', text: '回滚测试条目：删除后从备份恢复应保留原 entry_id。' })
+  const before = db.getByFp(fp).entry_id
+  store.removeEntry(fp) // 先备份 DB 再删
+  assert.equal(db.getByFp(fp), undefined)
+  const r = store.restoreEntry(fp)
+  assert.equal(r.ok, true)
+  assert.equal(db.getByFp(fp).entry_id, before, '恢复后 entry_id 应与删除前一致')
+  const auditRow = db.openDb().prepare("SELECT entry_id FROM audit_log WHERE action='RESTORE' ORDER BY id DESC LIMIT 1").get()
+  assert.equal(auditRow.entry_id, before)
+})
+
+test('shouldRunAuto：0 关闭 / 无时间戳视为从未执行 / 未到期不执行', async () => {
+  const { shouldRunAuto } = await import('../meta.mjs')
+  const now = Date.now()
+  assert.equal(shouldRunAuto(null, 3, now), true, '从未执行 → 需要执行')
+  assert.equal(shouldRunAuto(null, 0, now), false, 'days=0 → 关闭')
+  assert.equal(shouldRunAuto('garbage', 3, now), true, '时间戳非法 → 视为从未执行')
+  assert.equal(shouldRunAuto(new Date(now - 2 * 86400000).toISOString(), 3, now), false, '未到期 → 不执行')
+  assert.equal(shouldRunAuto(new Date(now - 3 * 86400000).toISOString(), 3, now), true, '已到期 → 执行')
+})
+
+test('巩固只认「最近被真实召回」的条目（与召回时间挂钩）', () => {
+  const a = store.writeEntry({ track: 'agent', text: '巩固A：最近被召回，应被加权。' })
+  const b = store.writeEntry({ track: 'agent', text: '巩固B：很久以前被召回，不应再加权。' })
+  db.upsertEntry({ fp: a.fp, hits: 5, weight: 5, last_accessed: new Date().toISOString() })
+  db.upsertEntry({ fp: b.fp, hits: 5, weight: 5, last_accessed: new Date(Date.now() - 30 * 86400000).toISOString() })
+  const r = I.runDream()
+  assert.equal(r.consolidated, 1, '只有最近召回的条目被巩固')
+  assert.equal(db.getByFp(a.fp).weight, 6, '最近召回 → +1')
+  assert.equal(db.getByFp(b.fp).weight, 5, '久未召回 → 不加权')
+})

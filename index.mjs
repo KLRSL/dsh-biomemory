@@ -37,7 +37,7 @@ import {
   consolidateHits, removeEntry, restoreEntry, entryStatus, updateEntryText,
 } from './store.mjs'
 import { tokenize, tfidfVectors, cosine, semanticSearch, queryEntries } from './retrieve.mjs'
-import { runDream, clusterEntries, latestReflection, runReflect } from './meta.mjs'
+import { runDream, clusterEntries, latestReflection, runReflect, shouldRunAuto } from './meta.mjs'
 import { renderSnapshot, sessionSummarySectionText, handleSessionEvent } from './snapshot.mjs'
 import { gateWrite, selfHeal } from './gate.mjs'
 import { setPetEndpoint, getPetEndpoint, petNotify } from './notify.mjs'
@@ -50,10 +50,22 @@ import {
 export const inject = ['tools', 'systemPrompt']
 
 // ---------- 读取请求体（Web API 用） ----------
+// v0.8.0：加大小上限（默认 1 MiB，可用 DSH_BIOMEMORY_BODY_LIMIT 覆盖）——旧实现无限缓冲，
+// 本机任何进程都能用超大 body 把插件内存打满。
+const BODY_LIMIT = Number(process.env.DSH_BIOMEMORY_BODY_LIMIT) > 0 ? Number(process.env.DSH_BIOMEMORY_BODY_LIMIT) : 1024 * 1024
 function readBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = []
-    req.on('data', (c) => chunks.push(c))
+    let size = 0
+    req.on('data', (c) => {
+      size += c.length
+      if (size > BODY_LIMIT) {
+        reject(new Error(`请求体超过上限 ${BODY_LIMIT} 字节`))
+        req.destroy()
+        return
+      }
+      chunks.push(c)
+    })
     req.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')))
     req.on('error', reject)
   })
@@ -414,26 +426,16 @@ export function apply(ctx, config = {}) {
   //    Markdown 备份的产物、之后不再生成）→ 恒为 null → 每次插件加载都全量跑一遍 dream，
   //    叠加当时的复合衰减把行为记忆压到归档阈值以下（实测 19 条被误归档，见 fp:1fed41ef）。
   try {
-    const agoDays = (v) => {
-      const t = v ? new Date(v).getTime() : NaN
-      return Number.isNaN(t) ? null : (Date.now() - t) / 86400000
+    if (shouldRunAuto(db.metaGet('lastDreamAt'), CFG.autoDreamDays)) {
+      const r = runDream()
+      audit('AUTO-DREAM', { scanned: r.scanned, decayed: r.decayed, archived: r.archived })
+      scheduleMirrorSync('auto-dream').catch(() => {})
+      dbgLog(`auto dream: scanned=${r.scanned}`)
     }
-    if (CFG.autoDreamDays > 0) {
-      const d = agoDays(db.metaGet('lastDreamAt'))
-      if (d === null || d >= CFG.autoDreamDays) {
-        const r = runDream()
-        audit('AUTO-DREAM', { scanned: r.scanned, decayed: r.decayed, archived: r.archived })
-        scheduleMirrorSync('auto-dream').catch(() => {})
-        dbgLog(`auto dream: scanned=${r.scanned}`)
-      }
-    }
-    if (CFG.autoReflectDays > 0) {
-      const d = agoDays(db.metaGet('lastReflectAt'))
-      if (d === null || d >= CFG.autoReflectDays) {
-        const r = runReflect()
-        audit('AUTO-REFLECT', { reportFile: r.reportFile })
-        dbgLog(`auto reflect: ${r.reportFile}`)
-      }
+    if (shouldRunAuto(db.metaGet('lastReflectAt'), CFG.autoReflectDays)) {
+      const r = runReflect()
+      audit('AUTO-REFLECT', { reportFile: r.reportFile })
+      dbgLog(`auto reflect: ${r.reportFile}`)
     }
   } catch (err) {
     dbgLog(`auto run failed: ${String(err && err.message || err)}`)

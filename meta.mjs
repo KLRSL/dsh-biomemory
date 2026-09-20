@@ -14,6 +14,19 @@ import {
 } from './shared.mjs'
 import { tokenize, cosine } from './retrieve.mjs'
 
+// 自动代谢/反思的触发判据（v0.8.0 抽成纯函数，供单测直接锁死）：
+//   - days <= 0 → 关闭，永不自动执行；
+//   - 时间戳缺失/非法 → 视为「从未执行」→ 需要执行；
+//   - 否则：距上次执行 ≥ days 天才执行。
+// 旧实现用 store.latestBackup()（单轨制后恒 null）→ 每次插件加载都全量 dream（fp:1fed41ef）。
+export function shouldRunAuto(lastStamp, days, nowMs = Date.now()) {
+  const d = Number(days)
+  if (!(d > 0)) return false
+  const t = lastStamp ? new Date(lastStamp).getTime() : NaN
+  if (Number.isNaN(t)) return true
+  return nowMs - t >= d * 86400000
+}
+
 // ---------- 记忆代谢（dream：衰减 + 巩固 + 冲突仲裁 + 归档） ----------
 
 export function runDream(opts = {}) {
@@ -70,8 +83,15 @@ export function runDream(opts = {}) {
       e.weight = nextWeight
       changed = true
     }
-    // 2. 巩固：引用 ≥ 阈值 → 加权（设上限）
-    if (e.hits >= CFG.consolidateThreshold && e.weight < CFG.weightCap) {
+    // 2. 巩固（用进废退）：只有「最近仍被真实召回」的条目才加权。
+    //    旧实现只要 hits 累计 ≥ 阈值就每次 dream 都 +1——与召回时间脱钩，久不使用的条目也会无限涨权
+    //    （实测 CONSOLIDATE 3020 次）。现在要求 last_accessed 落在半个半衰期内（recall 由 retrieve 写入）。
+    const recent = (() => {
+      if (!e.last_accessed) return false
+      const t = new Date(e.last_accessed).getTime()
+      return !Number.isNaN(t) && now - t <= CFG.halfLifeDays * 86400000
+    })()
+    if (e.hits >= CFG.consolidateThreshold && e.weight < CFG.weightCap && recent) {
       report.consolidated++
       report.items.push({ op: 'CONSOLIDATE', layer: e.layer, fp: e.fp, entry_id: e.entry_id, to: Math.min(CFG.weightCap, e.weight + 1) })
       e.weight = Math.min(CFG.weightCap, e.weight + 1)

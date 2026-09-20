@@ -269,7 +269,9 @@ export function consolidateHits(fpSet) {
   if (!fpSet || !fpSet.size) return 0
   db.openDb()
   for (const fp of fpSet) {
-    db.touchEntry(fp, { hitsDelta: 1 })
+    // v0.8.0：顺带记录召回时间（last_accessed）——dream 的巩固只认「最近仍被召回」的条目，
+    // 旧实现从不更新该列，导致久不使用的条目也一直涨权。
+    db.touchEntry(fp, { hitsDelta: 1, accessed: true })
   }
   return fpSet.size
 }
@@ -310,9 +312,11 @@ export function restoreEntry(fp) {
   for (const name of backups) {
     const e = db.readEntryFromBackup(fp, name)
     if (!e) continue
-    const { entry_id, vector, ...rest } = e
-    db.upsertEntry({ ...rest, status: e.status || 'active', vector: null })
-    audit('RESTORE', { fp, text: e.text, entry_id, detail: { from: name } })
+    const { vector, ...rest } = e
+    // v0.8.0：保留原 entry_id——旧实现丢弃它，upsertEntry 会重新生成 UUID，
+    // 于是历史审计行（按 entry_id 关联）全部指向不存在的条目（实测 6893/10006 行悬空）。
+    db.upsertEntry({ ...rest, entry_id: e.entry_id, status: e.status || 'active', vector: null })
+    audit('RESTORE', { fp, text: e.text, entry_id: e.entry_id, detail: { from: name } })
     return { ok: true, fp, layer: e.layer, text: e.text, backup: name }
   }
   return { ok: false, error: `备份库中未找到 [fp:${fp}]（备份保留最近 ${db.MAX_BACKUPS || 7} 次）` }
