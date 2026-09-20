@@ -93,17 +93,24 @@ test('快照不注入归档条目（归档 = 退出注入，避免静默下架�
   assert.ok(!renderSnapshot().includes('ZZZARCHIVEDZZZ'))
 })
 
-test('沉淀提醒窗口可配（默认 60 分钟）：窗口内提醒，超窗口丢弃', async () => {
+test('沉淀提醒窗口可配（默认 5 分钟）：窗口内提醒，超窗口丢弃，调大后恢复提醒', async () => {
   const snap = await import('../snapshot.mjs')
   const ss = await import('../session-state.mjs')
+  // 默认 5 分钟：30 分钟前的轮次已过期
   ss.markSummaryPending('s1')
   ss.setLastTurnEnd(Date.now() - 30 * 60 * 1000, 's1')
-  const t = snap.sessionSummarySectionText()
-  assert.ok(t.includes('主动沉淀是默认行为'), '窗口内应注入「主动沉淀」提醒')
-  ss.markSummaryPending('s1')
-  ss.setLastTurnEnd(Date.now() - 90 * 60 * 1000, 's1')
-  assert.equal(snap.sessionSummarySectionText(), '', '超窗口应丢弃（并清标记）')
+  assert.equal(snap.sessionSummarySectionText(), '', '默认窗口（5 分钟）外的轮次不再催促')
   assert.equal(ss.isSummaryPending(), false)
+  // 窗口内（4 分钟）应提醒
+  ss.markSummaryPending('s1')
+  ss.setLastTurnEnd(Date.now() - 4 * 60 * 1000, 's1')
+  assert.ok(snap.sessionSummarySectionText().includes('主动沉淀是默认行为'), '窗口内应注入「主动沉淀」提醒')
+  // 调大窗口后，30 分钟前也提醒
+  I.setConfig({ sinkWindowMinutes: 60 })
+  ss.markSummaryPending('s1')
+  ss.setLastTurnEnd(Date.now() - 30 * 60 * 1000, 's1')
+  assert.ok(snap.sessionSummarySectionText().includes('主动沉淀是默认行为'), '调大窗口后应提醒')
+  I.setConfig({ sinkWindowMinutes: 5 }) // 还原默认
 })
 
 test('写入去重（记忆原子化·merge 模式）：近重复合并进已有条目并提权，不产生碎片', () => {

@@ -88,6 +88,16 @@ window.__ModuleLoader__.load({
 				autoDreamDaysHelp: "启动时距上次代谢超过此天数自动执行 dream（默认 7）",
 				autoReflectDays: "自动反思周期（天，0=关闭）",
 				autoReflectDaysHelp: "启动时距上次反思超过此天数自动执行（默认 3）",
+				nearDuplicateThreshold: "写入去重阈值（0~1，0=关闭）",
+				nearDuplicateThresholdHelp: "与已有同类条目相似度 ≥ 此值时按右侧策略处理（默认 0.7）",
+				nearDuplicateAction: "近重复处理",
+				nearDuplicateActionHelp: "merge=自动合并进已有条目（追加「补充·日期」并提权）／skip=只提示不写入",
+				nearDuplicateActionMerge: "自动合并（推荐）",
+				nearDuplicateActionSkip: "只提示",
+				sinkWindowMinutes: "沉淀提醒窗口（分钟）",
+				sinkWindowMinutesHelp: "每轮结束后「请沉淀」提醒的有效时长（默认 5 分钟；超时丢弃，等下一轮重新判断）",
+				preloadEmbeddings: "启动时预加载嵌入模型",
+				preloadEmbeddingsHelp: "默认关：首次语义检索时才加载约 24MB 本地模型（开启会拖慢每次启动）",
 				reset: "恢复默认",
 				resetConfirm: "确定恢复全部默认设置？",
 				petEndpoint: "本地通知服务 URL（可选，可为空）",
@@ -209,6 +219,16 @@ window.__ModuleLoader__.load({
 				autoDreamDaysHelp: "Run dream if older (default 7)",
 				autoReflectDays: "Auto-reflect (days, 0=off)",
 				autoReflectDaysHelp: "Run reflect if older (default 3)",
+				nearDuplicateThreshold: "Write dedup threshold (0-1, 0=off)",
+				nearDuplicateThresholdHelp: "Similarity to an existing entry of the same type at or above this triggers the policy on the right (default 0.7)",
+				nearDuplicateAction: "Near-duplicate policy",
+				nearDuplicateActionHelp: "merge = fold into the existing entry (appends a dated supplement and raises weight) / skip = only report it",
+				nearDuplicateActionMerge: "Merge automatically (recommended)",
+				nearDuplicateActionSkip: "Report only",
+				sinkWindowMinutes: "Sink reminder window (minutes)",
+				sinkWindowMinutesHelp: "How long the post-turn sink reminder stays valid (default 5; older ones are dropped and re-judged next turn)",
+				preloadEmbeddings: "Preload embedding model at startup",
+				preloadEmbeddingsHelp: "Off by default: the ~24MB local model loads on the first semantic query (turning it on slows every start)",
 				reset: "Reset",
 				resetConfirm: "Reset all settings?",
 				petEndpoint: "Notify service URL (optional)",
@@ -387,7 +407,7 @@ window.__ModuleLoader__.load({
 .bm-page[data-dsh-theme="dark"] .bm-conflict-item{background:color-mix(in srgb,var(--bm-error) 8%,var(--bm-bg))}
 .bm-page[data-dsh-theme="dark"] .bm-badge-conflict{background:color-mix(in srgb,var(--bm-error) 16%,transparent)}
 `;
-		const CONFIG_KEYS = ["halfLifeDays", "decayThreshold", "consolidateThreshold", "weightCap", "hotTokenLimit", "maxQueryResults", "autoDreamDays", "autoReflectDays"];
+		const CONFIG_KEYS = ["halfLifeDays", "decayThreshold", "consolidateThreshold", "weightCap", "hotTokenLimit", "maxQueryResults", "autoDreamDays", "autoReflectDays", "nearDuplicateThreshold", "sinkWindowMinutes"];
 		const { Button, Input, StateDot, IconSearchOutline16, IconTrashOutline16, IconRefreshOutline14, IconCheckOutline16, IconWarningOutline16, IconThinkOutline14, IconSettingsOutline16, IconLinkOutline14, IconBrowseOutline16 } = prim;
 		function BiomemorySettingsPage() {
 			const t = text();
@@ -395,6 +415,9 @@ window.__ModuleLoader__.load({
 			const [configText, setConfigText] = react.useState({});
 			const [petEndpoint, setPetEndpoint] = react.useState("");
 			const [fallback, setFallback] = react.useState("auto");
+			// v0.8.0 新增配置：近重复处理策略（merge/skip）与启动预加载嵌入模型（布尔，不能走数值字段）
+			const [dupAction, setDupAction] = react.useState("merge");
+			const [preload, setPreload] = react.useState(false);
 			const [saveState, setSaveState] = react.useState(null);
 			const [dream, setDream] = react.useState(null);
 			const [audit, setAudit] = react.useState(null);
@@ -438,6 +461,8 @@ window.__ModuleLoader__.load({
 					setConfigText(textForm);
 					setPetEndpoint(data.petEndpoint || "");
 					setFallback(data.config?.approvalFallback || "auto");
+					setDupAction(data.config?.nearDuplicateAction === "skip" ? "skip" : "merge");
+					setPreload(data.config?.preloadEmbeddings === true);
 					setStatus({ kind: "ready", value: data });
 				}).catch(() => setStatus({ kind: "error" }));
 			}, []);
@@ -483,6 +508,8 @@ window.__ModuleLoader__.load({
 				for (const key of CONFIG_KEYS) { const value = configText[key]; if (value !== void 0 && value !== "") body[key] = Number(value); }
 				body.petEndpoint = petEndpoint.trim() !== "" ? petEndpoint.trim() : null;
 				body.approvalFallback = fallback === "deny" ? "deny" : "auto";
+				body.nearDuplicateAction = dupAction === "skip" ? "skip" : "merge"; // v0.8.0：字符串配置，不能走数值字段
+				body.preloadEmbeddings = preload === true;
 				apiFetch("/biomemory/api/config", {
 					method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
 					body: JSON.stringify(body)
@@ -507,6 +534,8 @@ window.__ModuleLoader__.load({
 					if (!data?.ok) throw new Error("reset failed");
 					setPetEndpoint(data.petEndpoint || "");
 					setFallback(data.config?.approvalFallback || "auto");
+					setDupAction(data.config?.nearDuplicateAction === "skip" ? "skip" : "merge");
+					setPreload(data.config?.preloadEmbeddings === true);
 					const textForm = {};
 					for (const key of CONFIG_KEYS) textForm[key] = data.config[key] !== void 0 ? String(data.config[key]) : "";
 					setConfigText(textForm);
@@ -734,7 +763,9 @@ window.__ModuleLoader__.load({
 					hotTokenLimit: t.hotTokenLimit,
 					maxQueryResults: t.maxQueryResults,
 					autoDreamDays: t.autoDreamDays,
-					autoReflectDays: t.autoReflectDays
+					autoReflectDays: t.autoReflectDays,
+					nearDuplicateThreshold: t.nearDuplicateThreshold,
+					sinkWindowMinutes: t.sinkWindowMinutes
 				};
 				const helps = {
 					halfLifeDays: t.halfLifeDaysHelp,
@@ -744,7 +775,9 @@ window.__ModuleLoader__.load({
 					hotTokenLimit: t.hotTokenLimitHelp,
 					maxQueryResults: t.maxQueryResultsHelp,
 					autoDreamDays: t.autoDreamDaysHelp,
-					autoReflectDays: t.autoReflectDaysHelp
+					autoReflectDays: t.autoReflectDaysHelp,
+					nearDuplicateThreshold: t.nearDuplicateThresholdHelp,
+					sinkWindowMinutes: t.sinkWindowMinutesHelp
 				};
 				return (0, react.createElement)("div", {
 					key,
@@ -775,7 +808,7 @@ window.__ModuleLoader__.load({
 				return (0, react.createElement)("ul", { className: "bm-list" }, entries.map((entry, index) => (0, react.createElement)("li", { key: index }, `${(entry.t || "").slice(0, 16)} ${entry.action || entry.event || ""} ${entry.entry_id || entry.fp || ""} ${entry.detail || entry.text || ""}`)));
 			})();
 			const saveNote = saveState === null ? null : saveState.kind === "saving" ? (0, react.createElement)("span", { className: "bm-note" }, t.saving) : saveState.kind === "ok" ? (0, react.createElement)("span", { className: "bm-ok" }, t.saved) : (0, react.createElement)("span", { className: "bm-err" }, t.saveFailed);
-			const settingsSection = (0, react.createElement)(react.Fragment, null, (0, react.createElement)("section", { className: "bm-block" }, (0, react.createElement)("h4", null, t.config), (0, react.createElement)("div", { className: "bm-config" }, ...configFields, (0, react.createElement)("div", { className: "bm-field bm-wide" }, (0, react.createElement)("label", null, t.fallback), (0, react.createElement)("select", { value: fallback, onChange: (event) => setFallback(event.target.value) }, (0, react.createElement)("option", { value: "auto" }, t.fallbackAuto), (0, react.createElement)("option", { value: "deny" }, t.fallbackDeny)), (0, react.createElement)("span", { className: "bm-note" }, t.fallbackHelp)), (0, react.createElement)("div", { className: "bm-field bm-wide" }, (0, react.createElement)("label", null, t.petEndpoint), (0, react.createElement)(Input, {
+			const settingsSection = (0, react.createElement)(react.Fragment, null, (0, react.createElement)("section", { className: "bm-block" }, (0, react.createElement)("h4", null, t.config), (0, react.createElement)("div", { className: "bm-config" }, ...configFields, (0, react.createElement)("div", { className: "bm-field bm-wide" }, (0, react.createElement)("label", null, t.fallback), (0, react.createElement)("select", { value: fallback, onChange: (event) => setFallback(event.target.value) }, (0, react.createElement)("option", { value: "auto" }, t.fallbackAuto), (0, react.createElement)("option", { value: "deny" }, t.fallbackDeny)), (0, react.createElement)("span", { className: "bm-note" }, t.fallbackHelp)), (0, react.createElement)("div", { className: "bm-field bm-wide" }, (0, react.createElement)("label", null, t.nearDuplicateAction), (0, react.createElement)("select", { value: dupAction, onChange: (event) => setDupAction(event.target.value) }, (0, react.createElement)("option", { value: "merge" }, t.nearDuplicateActionMerge), (0, react.createElement)("option", { value: "skip" }, t.nearDuplicateActionSkip)), (0, react.createElement)("span", { className: "bm-note" }, t.nearDuplicateActionHelp)), (0, react.createElement)("div", { className: "bm-field bm-wide" }, (0, react.createElement)("label", null, (0, react.createElement)("input", { type: "checkbox", checked: preload === true, onChange: (event) => setPreload(event.target.checked), style: { marginRight: 8 } }), t.preloadEmbeddings), (0, react.createElement)("span", { className: "bm-note" }, t.preloadEmbeddingsHelp)), (0, react.createElement)("div", { className: "bm-field bm-wide" }, (0, react.createElement)("label", null, t.petEndpoint), (0, react.createElement)(Input, {
 				icon: (0, react.createElement)(IconLinkOutline14, { size: 14 }),
 				type: "text",
 				value: petEndpoint,
