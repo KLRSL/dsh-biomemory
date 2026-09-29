@@ -133,127 +133,78 @@ const appRoot = createRoot(document.getElementById('app'))
 appRoot.render(React.createElement(Component))
 await tick()
 
-console.log('\n[1] 页面骨架（现代极简）')
+console.log('\n[1] 页面骨架（精简后：3 tab）')
 {
   const h3 = document.querySelector('.bm-page h3')
   check('标题「记忆工作台」', !!h3 && h3.textContent.includes('记忆工作台'), h3 && h3.textContent)
   const sub = document.querySelector('.bm-sub')
   check('副标题（数字海马体）', !!sub && sub.textContent.includes('数字海马体'))
   const tabs = [...document.querySelectorAll('.bm-tab')]
-  check('五 tab：概览/知识库/代谢/反思/设置', tabs.length === 5 && tabs[0].textContent.includes('概览') && tabs[2].textContent.includes('代谢'), tabs.map((t) => t.textContent).join(','))
-  check('默认 tab=概览 激活', tabs[0].classList.contains('active'))
+  check('三个 tab：记忆/维护/设置', tabs.length === 3
+    && tabs[0].textContent.includes('记忆')
+    && tabs[1].textContent.includes('维护')
+    && tabs[2].textContent.includes('设置'), tabs.map((x) => x.textContent).join(','))
+  check('默认 tab=记忆 激活', tabs[0].classList.contains('active'))
+  check('概览已下线（无状态卡）', document.querySelectorAll('.bm-card').length === 0)
 }
 
-console.log('\n[2] 概览：状态卡')
+console.log('\n[2] 记忆 tab：搜索与条目')
 {
-  const cards = [...document.querySelectorAll('.bm-card .v')]
-  const values = cards.map((c) => c.textContent)
-  check('状态卡数值（151/15/26）', values.some((v) => v === '151') && values.some((v) => v === '15') && values.some((v) => v === '26'), values.join(','))
-  const labels = [...document.querySelectorAll('.bm-card .l')].map((l) => l.textContent)
-  check('状态卡标签（全部记忆/锁定/代谢健康）', labels.some((l) => l.includes('全部记忆')) && labels.some((l) => l.includes('锁定')) && labels.some((l) => l.includes('代谢健康')), labels.join(','))
-}
-
-console.log('\n[3] 概览：记忆构成（行内紧凑条）')
-{
-  const h4s = [...document.querySelectorAll('.bm-block h4')].map((h) => h.textContent)
-  check('构成/记忆流分区标题', h4s.some((h) => h.includes('记忆构成')) && h4s.some((h) => h.includes('记忆流')), h4s.join(','))
-  const rows = [...document.querySelectorAll('.bm-chart-row')]
-  check('紧凑条行渲染（类型+权重 ≥5 行）', rows.length >= 5, String(rows.length))
-  const fills = [...document.querySelectorAll('.bm-chart-row .fill')]
-  check('每条有填充条', fills.length === rows.length, `${fills.length}/${rows.length}`)
-  const rowText = rows.map((r) => r.textContent).join('|')
-  check('行含标签+数值+百分比', rowText.includes('fact') && rowText.includes('preference') && rowText.includes('≥10') && rowText.includes('%'), rowText.slice(0, 120))
-}
-
-console.log('\n[4] 记忆流：搜索（v0.9.0 起已无模式分段按钮）')
-{
-  const modeBtns = [...document.querySelectorAll('.bm-mode-btn')]
-  check('模式分段按钮已移除（语义检索下线）', modeBtns.length === 0, String(modeBtns.length))
-  const input = document.querySelector('.bm-search-row input')
+  const input = document.querySelector('.bm-toolbar input')
   check('搜索框存在且带占位', !!input && input.placeholder.includes('搜记忆'), input && input.placeholder)
-  const searchBtn = [...document.querySelectorAll('.bm-search-row button')]
-  check('搜索按钮', searchBtn.length >= 1)
-}
-
-console.log('\n[5] 记忆流：条目列表（无前缀标记）')
-{
-  // 输入关键词触发搜索
-  const input = document.querySelector('.bm-search-row input')
-  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
-  setter.call(input, '镜像')
-  input.dispatchEvent(new window.Event('input', { bubbles: true }))
-  await tick()
-  const searchBtn = [...document.querySelectorAll('.bm-search-row button')].find((b) => b.textContent.includes('搜索'))
+  const sel = document.querySelector('.bm-toolbar select')
+  check('层筛选下拉', !!sel, sel && sel.tagName)
+  // 条目是按需加载（挂载时不自动拉）→ 先点一次「搜索」
+  const searchBtn = [...document.querySelectorAll('.bm-toolbar button')].find((b) => b.textContent.includes('搜索'))
+  check('搜索按钮存在', !!searchBtn, '')
   if (searchBtn) { searchBtn.click(); await tick() }
-  const entries = [...document.querySelectorAll('.bm-flow-entry')]
-  check('记忆流条目渲染（≥1）', entries.length >= 1, String(entries.length))
+  const entries = [...document.querySelectorAll('.bm-entry')]
+  check('条目列表渲染（≥1）', entries.length >= 1, String(entries.length))
   if (entries.length) {
     const first = entries[0]
-    const mark = first.querySelector('.bm-flow-mark')
-    check('锁定条目金点', !!mark && mark.classList.contains('gold'))
-    const text = first.querySelector('.t')
-    check('条目原文显示（无金·/墨·前缀）', !!text && !text.textContent.includes('金·') && !text.textContent.includes('墨·'), text && text.textContent.slice(0, 20))
-    const meta = first.querySelector('.d')
-    check('元数据（preference · 权重 12 · 锁定）', !!meta && meta.textContent.includes('权重 12') && meta.textContent.includes('锁定'), meta && meta.textContent)
-    const opBtn = first.querySelector('.bm-flow-op button')
-    check('操作按钮（解锁）', !!opBtn && opBtn.textContent.includes('解锁'))
+    check('条目原文显示', !!first.querySelector('.bm-entry-text'), '')
+    const meta = first.querySelector('.bm-entry-meta')
+    check('元数据（权重/命中）', !!meta && meta.textContent.includes('权重'), meta && meta.textContent.slice(0, 60))
+    const ops = [...first.querySelectorAll('.bm-entry-ops button')].map((b) => b.textContent)
+    check('条目操作（钉选/编辑/删除）', ops.length >= 3, ops.join(','))
+    check('裁决按钮已下线', !ops.some((x) => x.includes('作废') || x.includes('取代')), ops.join(','))
   }
 }
 
-console.log('\n[6] 模式选择器已彻底移除')
+console.log('\n[3] 模式选择器已彻底移除')
 {
   check('DOM 中不存在 .bm-mode-btn', document.querySelectorAll('.bm-mode-btn').length === 0)
   check('DOM 中不存在 .bm-mode-row', document.querySelectorAll('.bm-mode-row').length === 0)
 }
 
-console.log('\n[7] 知识库 tab')
+console.log('\n[4] 维护 tab（代谢 + 审计）')
 {
   const tabs = [...document.querySelectorAll('.bm-tab')]
   tabs[1].click()
-  await tick()
-  const h4 = document.querySelector('.bm-block h4')
-  check('知识库标题', !!h4 && h4.textContent.includes('知识库'))
-  const kbModeBtns = [...document.querySelectorAll('.bm-mode-btn')]
-  check('知识库同样无模式分段按钮', kbModeBtns.length === 0)
-  const kbInput = document.querySelector('.bm-toolbar input')
-  check('知识库搜索框', !!kbInput)
-}
-
-console.log('\n[8] 代谢 tab（dream + audit）')
-{
-  const tabs = [...document.querySelectorAll('.bm-tab')]
-  tabs[2].click()
   await tick()
   const h4s = [...document.querySelectorAll('.bm-block h4')].map((h) => h.textContent)
   check('代谢/审计分区', h4s.some((h) => h.includes('记忆代谢')) && h4s.some((h) => h.includes('审计')), h4s.join(','))
   const btns = [...document.querySelectorAll('.bm-block button')].map((b) => b.textContent)
   check('dream 执行/预览按钮', btns.some((b) => b.includes('dream')), btns.join(','))
+  check('反思入口已下线', !h4s.some((h) => h.includes('反思')) && !h4s.some((h) => h.includes('记忆构成')), h4s.join(','))
 }
 
-console.log('\n[9] 反思 tab')
+console.log('\n[5] 设置 tab（配置项保留）')
 {
   const tabs = [...document.querySelectorAll('.bm-tab')]
-  tabs[3].click()
-  await tick()
-  const h4s = [...document.querySelectorAll('.bm-block h4')].map((h) => h.textContent)
-  check('反思标题', h4s.some((h) => h.includes('反思')), h4s.join(','))
-}
-
-console.log('\n[10] 设置 tab（配置项保留）')
-{
-  const tabs = [...document.querySelectorAll('.bm-tab')]
-  tabs[4].click()
+  tabs[2].click()
   await tick()
   const h4 = document.querySelector('.bm-block h4')
-  check('设置标题', !!h4 && h4.textContent.includes('系统配置'))
+  check('设置标题', !!h4 && h4.textContent.includes('系统配置'), h4 && h4.textContent)
   const labels = [...document.querySelectorAll('.bm-field label')].map((l) => l.textContent)
   check('配置字段（半衰期/归档阈值）', labels.some((l) => l.includes('半衰期')) && labels.some((l) => l.includes('归档阈值')), labels.join(','))
+  check('桌宠推送字段已下线', !labels.some((l) => l.includes('通知服务')), labels.join(','))
   const roots = [...document.querySelectorAll('.bm-root')].map((r) => r.textContent)
   const notes = [...document.querySelectorAll('.bm-note')].map((r) => r.textContent)
-  check('SQLite/迁移信息', roots.some((r) => r.includes('SQLite')) && (roots.some((r) => r.includes('Markdown')) || notes.some((r) => r.includes('Markdown'))), roots.join(' | ') + ' / ' + notes.join(' | '))
+  check('SQLite/迁移信息', roots.some((r) => r.includes('SQLite')) && (roots.some((r) => r.includes('Markdown')) || notes.some((r) => r.includes('Markdown'))), roots.join(' | '))
 }
 
-console.log('\n[11] 清理')
+console.log('\n[6] 清理')
 {
   appRoot.unmount()
   check('React 卸载', !document.querySelector('.bm-page'))
