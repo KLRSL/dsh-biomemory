@@ -83,7 +83,7 @@ export function loadConfig() {
     const saved = JSON.parse(raw)
     const merged = { ...DEFAULTS }
     // 2026-09-24 修复（根因：读路径只认数值，非数值字段一律被 continue 丢掉）：
-    //   旧实现除 petEndpoint 外一律 Number()，于是 approvalFallback='auto'→Number=NaN→丢弃→落回
+    //   旧实现一律 Number()，于是 approvalFallback='auto'→Number=NaN→丢弃→落回
     //   默认 'deny'（fail-closed 意外生效，重要记忆写入被静默拒绝）；extractProvider/extractModel
     //   这类字符串被清空（按需抽取永久报「未配置抽取模型」）；preloadEmbeddings=true→丢弃→false
     //   （预热失效）；nearDuplicateAction='skip'→丢弃→merge；autoDreamDays=3 能读但 0 会被丢。
@@ -95,9 +95,6 @@ export function loadConfig() {
         case 'approvalFallback':
           // 枚举：只认 'auto'（自动写入）/'deny'（fail-closed），其余保持默认
           if (v === 'auto' || v === 'deny') merged[k] = v
-          break
-        case 'petEndpoint':
-          merged[k] = typeof v === 'string' && v ? v : null
           break
         case 'extractProvider':
         case 'extractModel':
@@ -127,7 +124,6 @@ export function loadConfig() {
 export function saveConfig(next) {
   const out = {}
   for (const k of Object.keys(DEFAULTS)) out[k] = next[k]
-  out.petEndpoint = next.petEndpoint || null
   writeFile(PATHS.config, JSON.stringify(out, null, 2))
 }
 
@@ -236,7 +232,6 @@ const DBG = process.env.DSH_MEMORY_DEBUG === '1'
 export function dbgLog(msg) {
   if (!DBG) return
   try {
-    fs.appendFileSync(path.join(MEMORY_ROOT, 'pet-events.log'), `[${new Date().toISOString()}] ${msg}\n`)
   } catch { /* 忽略 */ }
 }
 

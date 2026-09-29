@@ -20,7 +20,6 @@ import {
   isImportant, detectConflict, bigramSimilarity, CFG, ensureDirs, audit as sharedAudit, dbgLog,
 } from './shared.mjs'
 import { clearSummaryPending } from './session-state.mjs'
-import { petNotify } from './notify.mjs'
 
 // ---------- 审计出入口（v0.6.7 修复：本模块必须走 shared.audit，不能直接 db.audit） ----------
 // 背景（2026-09-17 实查）：审计是「双写」——db.audit 只写 SQLite 的 audit_log 表，
@@ -249,7 +248,6 @@ export function writeEntry({ track, text, sessionId, approved, mode, source }) {
   // Markdown 仅保留为只读备份（曾因双轨导致 Markdown 新条目永不注入，见 2026-09-06 整理）
   // v0.6 会话沉淀：模型调 memory add 写入成功 → 视为"已沉淀"，清除待沉淀标记
   clearSummaryPending()
-  petNotify('记忆已保存', `${track === 'user' ? '偏好' : '经验'}：${text}`)
   return { ok: true, fp }
 }
 

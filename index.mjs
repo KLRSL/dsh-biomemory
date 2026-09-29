@@ -9,7 +9,6 @@
 //   meta.mjs         记忆代谢/深度反思
 //   snapshot.mjs     冻结快照/会话沉淀
 //   gate.mjs         审批门/自检
-//   notify.mjs       桌宠气泡通知
 //   session-state.mjs 会话沉淀状态
 //   db.mjs            SQLite 数据层
 //
@@ -22,7 +21,7 @@ import http from 'node:http'
 import os from 'node:os'
 import * as db from './db.mjs'
 
-// ---------- v0.6 架构升级：分组导入（shared/store/retrieve/meta/snapshot/gate/notify） ----------
+// ---------- v0.6 架构升级：分组导入（shared/store/retrieve/meta/snapshot/gate） ----------
 import {
   CFG, DEFAULTS, PATHS, getConfig, setConfig, setConflictThreshold,
   loadConfig, saveConfig,
@@ -39,7 +38,6 @@ import { queryEntries, tokenize } from './retrieve.mjs'
 import { runDream, clusterEntries, latestReflection, runReflect, shouldRunAuto } from './meta.mjs'
 import { renderSnapshot, sessionSummarySectionText, handleSessionEvent } from './snapshot.mjs'
 import { gateWrite, selfHeal } from './gate.mjs'
-import { setPetEndpoint, getPetEndpoint, petNotify } from './notify.mjs'
 import { scheduleMirrorSync } from './mirror.mjs'
 import { runExtract } from './extract.mjs'
 import {
@@ -473,7 +471,6 @@ export function apply(ctx, config = {}) {
   const persisted = loadConfig()
   setConfig({ ...DEFAULTS, ...persisted, ...(typeof config === 'object' && config ? config : {}) })
   setConflictThreshold(Number(CFG.conflictOverlap) || 3)
-  setPetEndpoint(typeof CFG.petEndpoint === 'string' ? CFG.petEndpoint : null)
   selfHeal()
   dbgLog('=== apply 执行 ===')
 
@@ -550,31 +547,29 @@ export function apply(ctx, config = {}) {
             const byType = conn.prepare('SELECT fragment_type AS k, COUNT(*) AS c FROM entries GROUP BY fragment_type ORDER BY c DESC').all().map((r) => ({ key: r.k, count: r.c }))
             const byWeight = conn.prepare("SELECT CASE WHEN weight >= 10 THEN '10+' WHEN weight >= 5 THEN '5-9' WHEN weight >= 3 THEN '3-4' ELSE '<3' END AS k, COUNT(*) AS c FROM entries GROUP BY k ORDER BY c DESC").all().map((r) => ({ key: r.k, count: r.c }))
             const audit7d = auditAggregate({ sinceDays: 7 })
-            return send(200, { ok: true, stats: { total: s.total, pinned: s.pinned, layers: s.layers, memoryRoot: MEMORY_ROOT, auditCount: auditRecs.length, dbPath: s.dbPath, migration: db.migrationStatus(), byType, byWeight, audit7d }, config: CFG, petEndpoint: getPetEndpoint() })
+            return send(200, { ok: true, stats: { total: s.total, pinned: s.pinned, layers: s.layers, memoryRoot: MEMORY_ROOT, auditCount: auditRecs.length, dbPath: s.dbPath, migration: db.migrationStatus(), byType, byWeight, audit7d }, config: CFG })
           }
           if (req.method === 'GET' && p === '/config') {
-            return send(200, { ok: true, config: CFG, petEndpoint: getPetEndpoint() })
+            return send(200, { ok: true, config: CFG })
           }
           if (req.method === 'POST' && p === '/config') {
             let body = {}
             try { body = JSON.parse(await readBody(req)) } catch { /* ignore */ }
-            const allowed = ['halfLifeDays', 'decayThreshold', 'consolidateThreshold', 'weightCap', 'hotTokenLimit', 'maxQueryResults', 'approvalFallback', 'autoDreamDays', 'autoReflectDays', 'nearDuplicateThreshold', 'nearDuplicateAction', 'sinkWindowMinutes', 'extractProvider', 'extractModel', 'extractMaxChars', 'extractMinConfidence', 'petEndpoint']
+            const allowed = ['halfLifeDays', 'decayThreshold', 'consolidateThreshold', 'weightCap', 'hotTokenLimit', 'maxQueryResults', 'approvalFallback', 'autoDreamDays', 'autoReflectDays', 'nearDuplicateThreshold', 'nearDuplicateAction', 'sinkWindowMinutes']
             if (body.reset === true) {
               try { fs.unlinkSync(PATHS.config) } catch { /* ignore */ }
               setConfig({ ...DEFAULTS })
               setConflictThreshold(Number(CFG.conflictOverlap) || 3)
-              setPetEndpoint(typeof CFG.petEndpoint === 'string' ? CFG.petEndpoint : null)
               audit('CONFIG', { changed: 'reset' })
-              return send(200, { ok: true, config: CFG, petEndpoint: getPetEndpoint(), reset: true })
+              return send(200, { ok: true, config: CFG, reset: true })
             }
             const next = { ...CFG }
             for (const k of allowed) {
               if (body[k] !== undefined) {
                 // v0.8.2（真机实测踩坑）：新增的**字符串/布尔**配置必须按类型落库。
-                // 旧代码除 petEndpoint/approvalFallback 外一律 Number()，于是：
+                // 旧代码除 approvalFallback 外一律 Number()，于是：
                 //   extractProvider/extractModel 被存成 0（之后 String(0)="0" 会被当成提供方名 → NO_ADAPTER）
-                if (k === 'petEndpoint') next[k] = typeof body[k] === 'string' && body[k] ? body[k] : null
-                else if (k === 'approvalFallback') next[k] = body[k] === 'auto' ? 'auto' : 'deny'
+                if (k === 'approvalFallback') next[k] = body[k] === 'auto' ? 'auto' : 'deny'
                 else if (k === 'extractProvider' || k === 'extractModel') next[k] = typeof body[k] === 'string' ? body[k].trim() : ''
                 else if (k === 'nearDuplicateAction') next[k] = body[k] === 'skip' ? 'skip' : 'merge'
                 else {
@@ -585,10 +580,9 @@ export function apply(ctx, config = {}) {
             }
             setConfig(next)
             setConflictThreshold(Number(CFG.conflictOverlap) || 3)
-            setPetEndpoint(typeof CFG.petEndpoint === 'string' ? CFG.petEndpoint : null)
             saveConfig(CFG)
             audit('CONFIG', { changed: Object.keys(body).filter((k) => allowed.includes(k)).join(',') })
-            return send(200, { ok: true, config: CFG, petEndpoint: getPetEndpoint() })
+            return send(200, { ok: true, config: CFG })
           }
           if (req.method === 'POST' && p === '/dream') {
             const dry = (await readBodyJson(req)).dryRun === true

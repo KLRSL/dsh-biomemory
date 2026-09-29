@@ -3,7 +3,7 @@
 //
 //   - gateWrite：分级审批门（重要 ask / 普通 auto；审批不可用按 approvalFallback 降级）
 //   - selfHeal：SQLite 完整性自检，损坏时从最近备份恢复
-// 从 index.mjs 拆出；依赖 shared / db / notify。
+// 从 index.mjs 拆出；依赖 shared / db。
 // ============================================================================
 
 import * as db from './db.mjs'

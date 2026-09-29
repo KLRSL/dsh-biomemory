@@ -16,7 +16,6 @@ const meta = await import('../meta.mjs')
 const snapshot = await import('../snapshot.mjs')
 const gate = await import('../gate.mjs')
 const ss = await import('../session-state.mjs')
-const notify = await import('../notify.mjs')
 import { openDb, closeDb } from '../db.mjs'
 openDb()
 
@@ -50,12 +49,6 @@ test('session-state 标记流转', () => {
   assert.ok(ss.isSummaryPending())
   ss.clearSummaryPending()
   assert.ok(!ss.isSummaryPending())
-})
-
-test('notify 无 petEndpoint 静默', () => {
-  notify.setPetEndpoint(null)
-  notify.petNotify('测试', '静默')
-  assert.ok(true)
 })
 
 test('gate.gateWrite 普通内容 auto', async () => {
