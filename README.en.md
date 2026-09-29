@@ -23,7 +23,7 @@ A cross-session memory plugin for [DeepSeek Harness](https://github.com/deepseek
 | Source traceability | `source_ref` records provenance (`session:<id>` by default); structured audit log with a 5-tuple (time / actor / event / entry / detail) |
 | Deterministic retrieval | One path: field-weighted keyword relevance (text 1.0 / summary 0.5 / entities 0.25) + bounded occurrence bonus + bounded weight bonus (≤50%). v0.9.0 removed the embedding model and the semantic/hybrid modes |
 | Fully editable | Every entry can be edited, removed, or restored (database backed up before removal); a single `.db` file holds everything and can be inspected with standard tools |
-| Native-module free | `node:sqlite` built-in + pure JS — no native module conflicts; **pure host plugin** (no UI half), used only through the `memory` tool and `/memory` command; five-tab "Memory Workbench" admin UI follows the DSH theme including dark mode |
+| Native-module free | `node:sqlite` built-in + pure JS — no native module conflicts; **pure host plugin** (no UI half), used only through the `memory` tool and `/memory` command. |
 
 ## Installation
 
@@ -230,7 +230,6 @@ Keyword-less queries (`list` browsing) sort by weight desc and float behavior me
 | `autoDreamDays` | `7` | Auto-run metabolism at startup if older than this many days (`0`=off) |
 | `autoReflectDays` | `3` | Auto-run reflection at startup if older than this many days (`0`=off) |
 | `conflictOverlap` | `3` | Conflict detection: proprietary bigram overlap threshold between behavior and a single preference |
-| `petEndpoint` | `null` | Optional: local desktop-pet notification service URL (off by default) |
 
 Editable via `POST /biomemory/api/config` (host only, no UI); persisted as `biomemory.config.json` (fully transparent).
 
@@ -246,11 +245,6 @@ Editable via `POST /biomemory/api/config` (host only, no UI); persisted as `biom
 | `POST /reflect` | Run deep reflection (body `{ "dryRun": true }`) |
 | `GET /entries` | List entries (`q` query / `layer` layer / `limit` cap) |
 | `POST /entries/pin` · `/unpin` · `/remove` · `/restore` · `/update` | Entry management (body carries `fp` etc.) |
-| `GET /audit` · `GET /audit/aggregate` | Audit query (`sinceDays`/`type`) / aggregation (`groupBy`) |
-
-### Notifications (optional)
-
-After configuring `petEndpoint`, memory-save events are pushed to a local desktop-pet bubble over HTTP POST (silent failure when the pet is offline; memory itself is unaffected).
 
 ### Environment variables
 
@@ -258,7 +252,7 @@ After configuring `petEndpoint`, memory-save events are pushed to a local deskto
 | --- | --- | --- |
 | `DSH_BIOMEMORY_DIR` | `~/.dsh/biomemory` | SQLite data directory |
 | `DSH_MEMORY_ROOT` | `~/.dsh/memory` | Legacy Markdown root (migration source & read-only backup) |
-| `DSH_MEMORY_DEBUG` | — | Writes debug logs when set to `1` |
+| `DSH_MEMORY_DEBUG` | No | Writes `[dsh-biomemory]`-prefixed debug logs to stderr when set to `1` |
 
 ## Compatibility
 
@@ -310,7 +304,7 @@ After configuring `petEndpoint`, memory-save events are pushed to a local deskto
 ## Development
 
 ```bash
-# Run the test suite (node:test, 69 tests, all green)
+# Run the test suite (node:test, 88 tests, all green)
 npm test
 
 # Release consistency check (version / README version exposure / files whitelist / lock / git state)
@@ -319,7 +313,7 @@ node scripts/release-check.mjs
 
 **CI**: `.github/workflows/ci.yml` runs "install deps → release check → unit tests → `npm pack --dry-run`" on Node 24 for every push and pull request.
 
-Module layout: `index.mjs` (wiring layer) + `shared` (config/audit/conflict) · `store` (write/pin/remove/restore/migration) · `retrieve` (query/semantic) · `meta` (metabolism/reflection) · `snapshot` (snapshot/session consolidation) · `gate` (approval/self-heal) · `notify` (desktop-pet notifications) · `session-state` · `db` (SQLite data layer) · `embed` (embedding model).
+Module layout: `index.mjs` (wiring layer) + `shared` (config/audit/conflict/snapshot budget) + `store` (write/pin/remove/restore/migration) + `retrieve` (deterministic retrieval) + `meta` (metabolism/reflection clustering) + `snapshot` (snapshot/session injection) + `gate` (approval gate/self-heal) + `mirror` (mirror sync) + `session-state` + `extract` (on-demand extraction, currently no entry point) + `db` (SQLite data layer).
 
 **Contributing**: fork → change → add/update tests → run `npm test` before submitting. Please include the DSH runtime version, Node version, and reproduction steps when reporting issues.
 

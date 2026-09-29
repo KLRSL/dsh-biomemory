@@ -223,14 +223,13 @@ memory action=audit aggregate=true groupBy=action   # 聚合统计
 | `weightCap` | `20` | 巩固权重上限（防膨胀） |
 | `hotTokenLimit` | `5000` | 快照注入热区 token 上限 |
 | `maxQueryResults` | `20` | 查询返回上限 |
-| `approvalFallback` | `auto` | 审批不可用时：`auto`=自动保存并审计降级 / `deny`=拒绝写入 |
+| `approvalFallback` | `deny` | 审批不可用时：`auto`=自动保存并审计降级 / `deny`=拒绝写入 |
 | `autoDreamDays` | `7` | 启动时距上次代谢（meta `lastDreamAt`）≥ 此天数自动执行（`0`=关闭） |
 | `autoReflectDays` | `3` | 启动时距上次反思（meta `lastReflectAt`）≥ 此天数自动执行（`0`=关闭） |
 | `nearDuplicateThreshold` | `0.7` | 写入去重（v0.8.0）：与已有**同类**条目的中文 bigram 相似度（长度相近时取 Jaccard 与包含度的较大者）≥ 此值时按 `nearDuplicateAction` 处理（`0`=关闭。实测「换了说法的同一件事」约 0.7~0.8） |
 | `nearDuplicateAction` | `merge` | 命中近重复时：`merge`=**合并进已有条目**（追加 `｜ 【补充·日期】…` 并提权 +1，借鉴 @zheexinn/dsh-memory 的 merge-on-write）／`skip`=只提示不写（返回相似条目 fp 供 `update`） |
 | `sinkWindowMinutes` | `5` | 轮次结束后「请沉淀值得长期记住的内容」提醒的有效窗口（分钟，可配）。窗口内注入一次催促；超时丢弃（下一轮重新判断），避免隔很久再发消息时被一条过期的「上一轮请沉淀」打扰 |
 | `conflictOverlap` | `3` | 冲突检测：行为与单条偏好的专有双字重叠阈值 |
-| `petEndpoint` | `null` | 可选：本地桌宠通知服务 URL（默认关闭） |
 
 可通过 `POST /biomemory/api/config` 调整（纯 host，无 UI）；持久化为 `biomemory.config.json`（透明可改）。
 
@@ -246,11 +245,7 @@ memory action=audit aggregate=true groupBy=action   # 聚合统计
 | `POST /reflect` | 深度反思（body `{ "dryRun": true }`） |
 | `GET /entries` | 条目列表（`q` 搜索词 / `layer` 分层 / `mode` 检索模式 / `limit` 上限） |
 | `POST /entries/pin` · `/unpin` · `/remove` · `/restore` · `/update` | 条目管理（body 含 `fp` 等） |
-| `GET /audit` · `GET /audit/aggregate` | 审计查询（`sinceDays`/`type`）/ 聚合统计（`groupBy`） |
-
-### 通知（可选）
-
-配置 `petEndpoint` 后，记忆保存等事件通过 HTTP POST 通知本地桌宠气泡（离线静默失败，不影响记忆本体）。
+| `GET /audit` | 审计查询（`sinceDays` / `type`） |
 
 ### 环境变量
 
@@ -258,7 +253,7 @@ memory action=audit aggregate=true groupBy=action   # 聚合统计
 | --- | --- | --- |
 | `DSH_BIOMEMORY_DIR` | `~/.dsh/biomemory` | SQLite 数据目录 |
 | `DSH_MEMORY_ROOT` | `~/.dsh/memory` | 旧 Markdown 根目录（迁移源与只读备份） |
-| `DSH_MEMORY_DEBUG` | — | `1` 时输出调试日志 |
+| `DSH_MEMORY_DEBUG` | 否 | `1` 时向 stderr 输出 `[dsh-biomemory]` 前缀的调试日志（镜像同步 / 迁移 / 自愈等） |
 
 ## 兼容性
 
@@ -317,7 +312,7 @@ memory action=audit aggregate=true groupBy=action   # 聚合统计
 ## 开发
 
 ```bash
-# 运行测试（node:test，69 个用例全绿）
+# 运行测试（node:test，88 个用例全绿）
 npm test
 
 # 发布一致性自检（版本号 / README 版本露出 / files 白名单 / lock / git 状态）
@@ -326,7 +321,7 @@ node scripts/release-check.mjs
 
 **CI**：`.github/workflows/ci.yml` 在 Node 24 上执行「安装依赖 → 发布自检 → 单元测试 → `npm pack --dry-run`」，推送与 PR 都会触发。
 
-模块结构：`index.mjs`（接线层）+ `shared`（配置/审计/冲突）· `store`（写入/钉/删/回滚/迁移）· `retrieve`（查询/语义）· `meta`（代谢/反思）· `snapshot`（快照/会话沉淀）· `gate`（审批/自检）· `notify`（桌宠通知）· `session-state` · `db`（SQLite 数据层）· `embed`（嵌入模型）。
+模块结构：`index.mjs`（接线层）+ `shared`（配置/审计/冲突/快照预算）+ `store`（写入/钉选/删除/恢复/迁移）+ `retrieve`（确定性检索）+ `meta`（代谢/反思聚类）+ `snapshot`（快照/会话注入）+ `gate`（审批门/自检）+ `mirror`（镜像同步）+ `session-state`（会话沉淀状态）+ `extract`（按需抽取，当前无入口）+ `db`（SQLite 数据层）
 
 **贡献**：fork → 修改 → 补充/更新测试 → 提交前运行 `npm test`；报 issue 请附 DSH 运行时版本、Node 版本与复现步骤。
 
