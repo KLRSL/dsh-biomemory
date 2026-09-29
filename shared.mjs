@@ -231,8 +231,14 @@ export function auditAggregate({ sinceDays, groupBy = 'action' } = {}) {
 const DBG = process.env.DSH_MEMORY_DEBUG === '1'
 export function dbgLog(msg) {
   if (!DBG) return
+  // 2026-09-29 修复：此前 try 块是**空的** —— 函数体虽然存在，却什么都不输出，
+  // 于是 DSH_MEMORY_DEBUG=1 形同虚设，且 dbgLog 的所有调用方一起静默失效：
+  //   mirror.mjs 镜像同步诊断、index.mjs 迁移/apply/auto-dream、gate.mjs 自愈失败……
+  // 排查"镜像没同步""自动代谢没跑"这类问题时没有任何线索。现写 stderr
+  // （不污染 stdout：宿主可能把 stdout 当协议通道）。
   try {
-  } catch { /* 忽略 */ }
+    console.error(`[dsh-biomemory] ${msg}`)
+  } catch { /* 忽略：日志失败绝不影响记忆本体 */ }
 }
 
 // ---------- 冲突仲裁（v0.5 P0-003 二次验证） ----------
