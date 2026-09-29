@@ -5,15 +5,16 @@
 //   - Markdown 条目解析/格式化（兼容新旧格式 ↔ SQLite 迁移）
 //   - 写入（writeEntry：去重 + 审计 + preferences 同步 + 会话沉淀标记清除）
 //   - 记忆钉 / 查找 / 备份 / 巩固 / 删除 / 回滚 / 条目状态 / 更新
-//   - Markdown→SQLite 一次性迁移 / 向量索引建立
+//   - Markdown→SQLite 一次性迁移
 //
-// 从 index.mjs 拆出；只依赖 shared.mjs / session-state.mjs / db / embed。
+// v0.9.0：向量索引（ensureVectors）已随语义检索一起移除。
+//
+// 从 index.mjs 拆出；只依赖 shared.mjs / session-state.mjs / db。
 // ============================================================================
 
 import fs from 'node:fs'
 import path from 'node:path'
 import * as db from './db.mjs'
-import * as embed from './embed.mjs'
 import {
   MEMORY_ROOT, PATHS, readFile, writeFile, appendFile, nowStamp, isoNow, tsToIso, fingerprint,
   isImportant, detectConflict, bigramSimilarity, CFG, ensureDirs, audit as sharedAudit, dbgLog,
@@ -172,28 +173,6 @@ export function migrateMarkdownToDb() {
   return { migrated: true, imported }
 }
 
-// v0.5 向量索引：给无向量的活跃条目补算嵌入（模型可用时）
-export async function ensureVectors() {
-  try {
-    const extractor = await embed.getExtractor()
-    if (!extractor) return { ok: false, reason: 'model-unavailable' }
-    const db2 = db.openDb()
-    const missing = db2.prepare("SELECT entry_id, text, summary FROM entries WHERE vector IS NULL AND status = 'active'").all()
-    if (missing.length === 0) return { ok: true, embedded: 0 }
-    const pairs = []
-    for (const row of missing) {
-      const vec = await embed.embed(row.summary || row.text)
-      if (vec) pairs.push([row.entry_id, vec])
-    }
-    if (pairs.length) db.setVectorsBatch(pairs)
-    audit('VECTORIZE', { text: `向量补齐 ${pairs.length}/${missing.length}`, detail: { count: pairs.length, total: missing.length } })
-    return { ok: true, embedded: pairs.length, pending: missing.length - pairs.length }
-  } catch (err) {
-    dbgLog(`ensureVectors failed: ${String(err && err.message || err)}`)
-    return { ok: false, reason: String(err && err.message || err) }
-  }
-}
-
 // ---------- 写入记忆（带审计；approval 在调用方 gate） ----------
 
 /** 记忆语义类别（memory_class）推断：
@@ -349,7 +328,7 @@ export function setEntryStatus(fp, status, opts = {}) {
   return { ok: true, fp, from: e.status, to: status, layer: e.layer, kind: e.kind, text: e.text }
 }
 
-// 单条目回滚：从最近备份库读回被删除的条目（保留元数据，向量置空重算），审计 RESTORE
+// 单条目回滚：从最近备份库读回被删除的条目（保留元数据），审计 RESTORE
 export function restoreEntry(fp) {
   db.openDb()
   const existing = db.getByFp(fp)
@@ -358,10 +337,9 @@ export function restoreEntry(fp) {
   for (const name of backups) {
     const e = db.readEntryFromBackup(fp, name)
     if (!e) continue
-    const { vector, ...rest } = e
     // v0.8.0：保留原 entry_id——旧实现丢弃它，upsertEntry 会重新生成 UUID，
     // 于是历史审计行（按 entry_id 关联）全部指向不存在的条目（实测 6893/10006 行悬空）。
-    db.upsertEntry({ ...rest, entry_id: e.entry_id, status: e.status || 'active', vector: null })
+    db.upsertEntry({ ...e, entry_id: e.entry_id, status: e.status || 'active', vector: null })
     audit('RESTORE', { fp, text: e.text, entry_id: e.entry_id, detail: { from: name } })
     return { ok: true, fp, layer: e.layer, text: e.text, backup: name }
   }
@@ -375,7 +353,7 @@ export function entryStatus(e, prefsText) {
   return 'ok'
 }
 
-// 编辑条目文本：保留 fp/锁定/权重等元数据，清空旧向量（文本变了向量失效），审计可追溯
+// 编辑条目文本：保留 fp/锁定/权重等元数据，审计可追溯
 export function updateEntryText(fp, text) {
   db.openDb()
   const e = db.getByFp(fp)
@@ -389,8 +367,7 @@ export function updateEntryText(fp, text) {
     if (dup) return { ok: false, error: '与已有记忆重复（文本指纹已存在）' }
   }
   const from = e.text
-  db.upsertEntry({ fp, text: trimmed })
-  try { db.openDb().prepare('UPDATE entries SET vector = NULL WHERE fp = ?').run(fp) } catch { /* 向量清理失败不影响编辑 */ }
+  db.upsertEntry({ fp, text: trimmed, vector: null })
   audit('UPDATE', { fp, text: trimmed, entry_id: e.entry_id, detail: { from: from.slice(0, 80), to: trimmed.slice(0, 80) } })
   return { ok: true, fp, text: trimmed }
 }

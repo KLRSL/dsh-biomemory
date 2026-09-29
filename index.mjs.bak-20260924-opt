@@ -11,7 +11,7 @@
 //   gate.mjs         审批门/自检
 //   notify.mjs       桌宠气泡通知
 //   session-state.mjs 会话沉淀状态
-//   db.mjs            SQLite 数据层
+//   db.mjs / embed.mjs  SQLite 数据层 / 嵌入与语义
 //
 // 目标运行时：@deepseek-ai/dsh-* 0.1.x（host runtime 实测契约）。
 // ============================================================================
@@ -21,6 +21,7 @@ import path from 'node:path'
 import http from 'node:http'
 import os from 'node:os'
 import * as db from './db.mjs'
+import * as embed from './embed.mjs'
 
 // ---------- v0.6 架构升级：分组导入（shared/store/retrieve/meta/snapshot/gate/notify） ----------
 import {
@@ -32,10 +33,10 @@ import {
 } from './shared.mjs'
 import {
   parseEntryLine, formatEntryLine, readEntries, scanAllFiles,
-  migrateMarkdownToDb, writeEntry, setPin,
+  migrateMarkdownToDb, ensureVectors, writeEntry, setPin,
   consolidateHits, removeEntry, restoreEntry, unarchiveEntry, setEntryStatus, entryStatus, updateEntryText,
 } from './store.mjs'
-import { queryEntries, tokenize } from './retrieve.mjs'
+import { tokenize, tfidfVectors, cosine, semanticSearch, queryEntries } from './retrieve.mjs'
 import { runDream, clusterEntries, latestReflection, runReflect, shouldRunAuto } from './meta.mjs'
 import { renderSnapshot, sessionSummarySectionText, handleSessionEvent } from './snapshot.mjs'
 import { gateWrite, selfHeal } from './gate.mjs'
@@ -85,7 +86,8 @@ function makeMemoryTool(ctx) {
       'Applied=实际注入 prompt 的内容（会话启动时冻结的快照，见记忆快照段）。查询≠注入，检索到不代表已采用。',
       '用法: memory action=add text="..." [track=user|agent] [source="来源说明"] —— 保存（重要项自动请求审批，审批不可用时按配置自动保存）',
       '      ⚠️ 写入去重（v0.8.0）：若与已有同类条目高度相似（默认 bigram 相似度 ≥0.7），不会新增，而是返回相似条目的 fp 与提示——此时应改用 update 合并，不要换措辞硬写第二条',
-      '      memory action=query text="关键词" [projectId=项目] [topK=10] [minWeight=0.1] [fragmentTypes=decision,preference] [includeArchived=false] —— 查询',
+      '      memory action=query text="关键词" [mode=hybrid|exact|semantic] [projectId=项目] [topK=10] [minWeight=0.1] [fragmentTypes=decision,preference] [includeArchived=false] —— 查询',
+      '           （hybrid=精确+语义混合（默认）；exact=关键词精确；semantic=向量语义；命中自动巩固）',
       '      memory action=update fp="指纹" text="新内容" —— 编辑一条（保留锁定/权重，自动审计可追溯）',
       '      memory action=remove fp="指纹" —— 删除一条（自动备份，可回滚）',
       '      memory action=restore fp="指纹" —— 从最近备份回滚被删除的一条',
@@ -110,6 +112,7 @@ function makeMemoryTool(ctx) {
         dryRun: { type: 'boolean', description: 'dream/reflect 时预览不执行' },
         type: { type: 'string', description: 'audit 过滤事件类型' },
         sinceDays: { type: 'number', description: 'audit 只看最近 N 天' },
+        mode: { type: 'string', enum: ['hybrid', 'exact', 'semantic'], description: 'query 检索模式（默认 hybrid）' },
         projectId: { type: 'string', description: 'query 限定项目范围' },
         topK: { type: 'number', description: 'query 返回结果数量上限' },
         minWeight: { type: 'number', description: 'query 最低权重阈值' },
@@ -144,7 +147,7 @@ function makeMemoryTool(ctx) {
         if (!value.ok) return [{ type: 'text', text: value.error || 'memory 操作失败' }]
         if (Array.isArray(value.entries)) {
           if (!value.entries.length) return [{ type: 'text', text: '（无匹配记忆）' }]
-          return [{ type: 'text', text: value.entries.map((e) => `- [${e.layer}]${e.memory_class ? `[${e.memory_class}]` : ''}${e.status === 'conflict' ? ' [冲突]' : ''} ${e.text}`).join('\n') }]
+          return [{ type: 'text', text: value.entries.map((e) => `- [${e.layer}]${e.memory_class ? `[${e.memory_class}]` : ''}${e.semantic ? '（语义）' : ''}${e.status === 'conflict' ? ' [冲突]' : ''} ${e.text}`).join('\n') }]
         }
         if (value.report) {
           const r = value.report
@@ -171,7 +174,7 @@ function makeMemoryTool(ctx) {
       return { card: 'generic', title: `记忆：${args?.action || ''}`, kind: 'other', rawInput: args }
     },
     async execute(args, exec) {
-      const { action, text = '', track = 'agent', fp, dryRun, type, sinceDays, projectId, topK, minWeight, fragmentTypes, includeArchived, aggregate, groupBy, resume, source } = args || {}
+      const { action, text = '', track = 'agent', fp, dryRun, type, sinceDays, mode, projectId, topK, minWeight, fragmentTypes, includeArchived, aggregate, groupBy, resume, source } = args || {}
       const sessionId = exec.agent?.id
       if (action === 'add') {
         if (!text.trim()) return { ok: false, error: 'text 必填' }
@@ -201,9 +204,9 @@ function makeMemoryTool(ctx) {
         const fts = typeof fragmentTypes === 'string' && fragmentTypes.trim()
           ? fragmentTypes.split(',').map((s) => s.trim()).filter(Boolean)
           : undefined
-        return { ok: true, entries: await queryEntries(text, topK || CFG.maxQueryResults, { projectId, topK: topK || CFG.maxQueryResults, minWeight, fragmentTypes: fts, includeArchived }) }
+        return { ok: true, entries: await queryEntries(text, topK || CFG.maxQueryResults, { mode, projectId, topK: topK || CFG.maxQueryResults, minWeight, fragmentTypes: fts, includeArchived }) }
       }
-      if (action === 'list') return { ok: true, entries: await queryEntries('', topK || 200) }
+      if (action === 'list') return { ok: true, entries: await queryEntries('', topK || 200, { mode: 'exact' }) }
       if (action === 'update') {
         if (!fp || !String(text ?? '').trim()) return { ok: false, error: 'fp 与 text 必填（先 list/query 找到指纹）' }
         const r = updateEntryText(fp, String(text).trim())
@@ -340,6 +343,7 @@ function registerMemoryCommand(ctx) {
             if (e.hits !== undefined) meta.push(`h${e.hits}`)
             if (e.ts) meta.push(e.ts)
             if (e.pinned) meta.push('PIN')
+            if (e.semantic) meta.push('语义')
             return `- [${e.layer}] [${meta.join(' ')}] ${e.text}`
           })
           return { kind: 'success', text: es.length ? es.join('\n') : (q ? `（无匹配：${q}）` : '（记忆为空）') }
@@ -480,6 +484,13 @@ export function apply(ctx, config = {}) {
   // v0.8.1：按需抽取要用到的宿主服务——懒注入，服务缺失时接口返回明确错误而不是崩
   ctx.inject(['sessions', 'llm'], (svcCtx) => { extractCtx = svcCtx })
 
+  // v0.8.0：向量索引改为**真懒加载**——默认不在启动时预建（旧实现在 apply 后 100ms 强制
+  // ensureVectors，等于每次 DSH 启动都要加载 ~24MB onnx 模型并初始化 onnxruntime）。
+  // 需要预热时在配置里设 preloadEmbeddings=true（或环境变量 DSH_BIOMEMORY_PRELOAD=1）。
+  if (CFG.preloadEmbeddings === true || process.env.DSH_BIOMEMORY_PRELOAD === '1') {
+    setTimeout(() => { ensureVectors().then((r) => dbgLog(`vectors: ${JSON.stringify(r)}`)) }, 100)
+  }
+
   // 0. 启动自动代谢/反思（距上次执行 ≥ 配置天数时自动执行，0=关闭）
   //    v0.8.0 修复：判据一律取 meta 表时间戳（lastDreamAt / lastReflectAt）。
   //    旧实现用 store.latestBackup()（MEMORY_ROOT/backups 下的 12 位数字目录，是 v0.6.4 单轨制前
@@ -550,7 +561,7 @@ export function apply(ctx, config = {}) {
             const byType = conn.prepare('SELECT fragment_type AS k, COUNT(*) AS c FROM entries GROUP BY fragment_type ORDER BY c DESC').all().map((r) => ({ key: r.k, count: r.c }))
             const byWeight = conn.prepare("SELECT CASE WHEN weight >= 10 THEN '10+' WHEN weight >= 5 THEN '5-9' WHEN weight >= 3 THEN '3-4' ELSE '<3' END AS k, COUNT(*) AS c FROM entries GROUP BY k ORDER BY c DESC").all().map((r) => ({ key: r.k, count: r.c }))
             const audit7d = auditAggregate({ sinceDays: 7 })
-            return send(200, { ok: true, stats: { total: s.total, pinned: s.pinned, layers: s.layers, memoryRoot: MEMORY_ROOT, auditCount: auditRecs.length, dbPath: s.dbPath, migration: db.migrationStatus(), byType, byWeight, audit7d }, config: CFG, petEndpoint: getPetEndpoint() })
+            return send(200, { ok: true, stats: { total: s.total, pinned: s.pinned, layers: s.layers, memoryRoot: MEMORY_ROOT, auditCount: auditRecs.length, dbPath: s.dbPath, vectors: db.vectorCount(), model: embed.modelInfo(), migration: db.migrationStatus(), byType, byWeight, audit7d }, config: CFG, petEndpoint: getPetEndpoint() })
           }
           if (req.method === 'GET' && p === '/config') {
             return send(200, { ok: true, config: CFG, petEndpoint: getPetEndpoint() })
@@ -558,7 +569,7 @@ export function apply(ctx, config = {}) {
           if (req.method === 'POST' && p === '/config') {
             let body = {}
             try { body = JSON.parse(await readBody(req)) } catch { /* ignore */ }
-            const allowed = ['halfLifeDays', 'decayThreshold', 'consolidateThreshold', 'weightCap', 'hotTokenLimit', 'maxQueryResults', 'approvalFallback', 'autoDreamDays', 'autoReflectDays', 'nearDuplicateThreshold', 'nearDuplicateAction', 'sinkWindowMinutes', 'extractProvider', 'extractModel', 'extractMaxChars', 'extractMinConfidence', 'petEndpoint']
+            const allowed = ['halfLifeDays', 'decayThreshold', 'consolidateThreshold', 'weightCap', 'hotTokenLimit', 'maxQueryResults', 'approvalFallback', 'autoDreamDays', 'autoReflectDays', 'nearDuplicateThreshold', 'nearDuplicateAction', 'sinkWindowMinutes', 'preloadEmbeddings', 'extractProvider', 'extractModel', 'extractMaxChars', 'extractMinConfidence', 'petEndpoint']
             if (body.reset === true) {
               try { fs.unlinkSync(PATHS.config) } catch { /* ignore */ }
               setConfig({ ...DEFAULTS })
@@ -573,10 +584,12 @@ export function apply(ctx, config = {}) {
                 // v0.8.2（真机实测踩坑）：新增的**字符串/布尔**配置必须按类型落库。
                 // 旧代码除 petEndpoint/approvalFallback 外一律 Number()，于是：
                 //   extractProvider/extractModel 被存成 0（之后 String(0)="0" 会被当成提供方名 → NO_ADAPTER）
+                //   preloadEmbeddings 的 false/true 变成 0/1
                 if (k === 'petEndpoint') next[k] = typeof body[k] === 'string' && body[k] ? body[k] : null
                 else if (k === 'approvalFallback') next[k] = body[k] === 'auto' ? 'auto' : 'deny'
                 else if (k === 'extractProvider' || k === 'extractModel') next[k] = typeof body[k] === 'string' ? body[k].trim() : ''
                 else if (k === 'nearDuplicateAction') next[k] = body[k] === 'skip' ? 'skip' : 'merge'
+                else if (k === 'preloadEmbeddings') next[k] = body[k] === true || body[k] === 1 || body[k] === '1' || body[k] === 'true'
                 else {
                   const v = Number(body[k])
                   if (Number.isFinite(v) && v >= 0) next[k] = v
@@ -605,24 +618,33 @@ export function apply(ctx, config = {}) {
           if (req.method === 'GET' && p === '/entries') {
             const q = url.searchParams.get('q') || ''
             const layer = url.searchParams.get('layer') || ''
+            const mode = url.searchParams.get('mode') || 'hybrid'
             const limit = Math.min(500, Number(url.searchParams.get('limit')) || 200)
             const prefsTextStr = prefsText()
             if (q) {
               // v0.6.5：带 q 时也应用 layer 筛选；queryEntries 已补齐 hits/pinned/mode/ts/kind
-              const res = await queryEntries(q, limit, { minWeight: 0, layer: layer || undefined })
+              const res = await queryEntries(q, limit, { mode, minWeight: 0, layer: layer || undefined })
               const seen = new Set()
               const merged = []
               for (const r of res) {
                 if (seen.has(r.fp)) continue
                 seen.add(r.fp)
-                merged.push({ layer: r.layer, fp: r.fp, kind: r.kind, mode: r.mode, weight: r.weight, hits: r.hits, ts: r.ts, pinned: r.pinned, text: r.text, fragment_type: r.fragment_type, status: entryStatus(r, prefsTextStr) })
+                merged.push({ layer: r.layer, fp: r.fp, kind: r.kind, mode: r.mode, weight: r.weight, hits: r.hits, ts: r.ts, pinned: r.pinned, text: r.text, fragment_type: r.fragment_type, semantic: r.semantic, status: entryStatus(r, prefsTextStr) })
               }
-              return send(200, { ok: true, entries: merged.slice(0, limit) })
+              return send(200, { ok: true, entries: merged.slice(0, limit), mode })
             }
             const all = db.listEntries({ layer: layer || undefined, limit: 1000 })
               .map((e) => ({ layer: e.layer, fp: e.fp, kind: e.kind, mode: e.mode, weight: e.weight, hits: e.hits, ts: e.created_at, pinned: e.pinned, text: e.text, fragment_type: e.fragment_type, status: entryStatus(e, prefsTextStr) }))
             all.sort((a, b) => (b.status === 'conflict') - (a.status === 'conflict') || (b.pinned - a.pinned) || (b.weight - a.weight) || String(b.ts || '').localeCompare(String(a.ts || '')))
             return send(200, { ok: true, entries: all.slice(0, limit) })
+          }
+          if (req.method === 'GET' && p === '/vectors') {
+            const r = await ensureVectors()
+            return send(200, { ok: true, ...r })
+          }
+          if (req.method === 'POST' && p === '/vectors') {
+            const r = await ensureVectors()
+            return send(200, { ok: true, ...r })
           }
           if (req.method === 'GET' && p === '/audit/aggregate') {
             const sinceDays = Number(url.searchParams.get('sinceDays')) || undefined
@@ -764,6 +786,7 @@ export const __internals = {
   restoreEntry,
   updateEntryText,
   entryStatus,
+  semanticSearch,
   tokenize,
   queryAudit,
   auditAggregate,
@@ -771,6 +794,7 @@ export const __internals = {
   setPin,
   scanAllFiles,
   migrateMarkdownToDb,
+  ensureVectors,
   sessionSummarySectionText,
   handleSessionEvent,
   markSummaryPending,

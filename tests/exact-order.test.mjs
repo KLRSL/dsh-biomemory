@@ -1,14 +1,14 @@
 // ============================================================================
-// dsh-biomemory v0.6.6 专项测试：exact 排序语义修正
+// dsh-biomemory 专项测试：确定性相关度排序
 //
-// 目标语义：exact 与 semantic/hybrid 一致「按相关度」排序，weight 只做有界次要因子——
+// v0.9.0：语义检索（embed.mjs）已移除，本文件只覆盖唯一的确定性检索：
 //   score = relevance · (1 + 0.5 · min(weight, weightCap) / weightCap)
 //   relevance = Σ 命中字段权重（text 1.0 / summary 0.5 / entities 0.25）+ 0.1·min(命中次数, 5)
 //
-// 覆盖四类用例（外加既有行为回归）：
-//   1. exact 模式下低 weight 但更相关者排前（单元 + queryEntries 端到端）
+// 覆盖：
+//   1. 低 weight 但更相关者排前（单元 + queryEntries 端到端）
 //   2. 同分（relevance 相同）时高 weight 在前；空查询浏览仍按 weight 降序（契约不破）
-//   3. 与 semantic/hybrid 互不污染（exact 不读向量层；semantic 只看相似度；hybrid 仍按 RRF）
+//   3. 检索层不再暴露任何向量/嵌入 API（防语义检索回归）
 //   4. 确定性：同输入两次一致；输入乱序结果一致
 // 运行: node --test tests\exact-order.test.mjs
 // ============================================================================
@@ -26,7 +26,7 @@ process.env.DSH_BIOMEMORY_DIR = path.join(tmpDir, 'biomemory')
 const mod = await import('../index.mjs')
 const I = mod.__internals
 const db = await import('../db.mjs')
-const embed = await import('../embed.mjs')
+const R = await import('../retrieve.mjs')
 
 const CAP = 20 // 与 CFG.weightCap 默认值一致，显式传入避免全局配置漂移影响断言
 
@@ -56,12 +56,12 @@ const REL_HIGH = {
 
 test('exact：低 weight 但更相关者排在高 weight 擦边命中者之前', async () => {
   assert.ok(REL_LOW.weight < REL_HIGH.weight, '构造前提：前者 weight 更低')
-  const lowRel = embed.exactRelevance('镜像源下载', REL_LOW)
-  const highRel = embed.exactRelevance('镜像源下载', REL_HIGH)
+  const lowRel = R.exactRelevance('镜像源下载', REL_LOW)
+  const highRel = R.exactRelevance('镜像源下载', REL_HIGH)
   // 前者命中正文+摘要且出现 3 次；后者仅实体标签命中 1 次
   assert.ok(lowRel.relevance > highRel.relevance, `相关度应更高（${lowRel.relevance} vs ${highRel.relevance}）`)
 
-  const res = await embed.search({ query: '镜像源下载', mode: 'exact', entries: [REL_HIGH, REL_LOW], topN: 5, weightCap: CAP })
+  const res = R.exactSearch('镜像源下载', [REL_HIGH, REL_LOW], 5, 0.1, { weightCap: CAP })
   assert.equal(ids(res)[0], 'e-low-weight', `更相关者应第一（实际 ${ids(res)}）`)
   // weight 仍有优势但被限幅：weight=20 的擦边命中者分数不会反超（≤50% 加成）
   const sLow = res.find((r) => r.entry.entry_id === 'e-low-weight').score
@@ -70,10 +70,10 @@ test('exact：低 weight 但更相关者排在高 weight 擦边命中者之前',
   assert.ok(sHigh <= highRel.relevance * (1 + 0.5), `weight 加成不超过 +50%（${sHigh}）`)
 })
 
-test('queryEntries（exact）端到端：低 weight 更相关者同样排前', async () => {
+test('queryEntries 端到端：低 weight 更相关者同样排前', async () => {
   db.upsertEntry({ fp: 'eo-relevant', layer: 'hot/behavior', kind: '行为', text: REL_LOW.text, summary: REL_LOW.summary, weight: 1 })
   db.upsertEntry({ fp: 'eo-marginal', layer: 'longterm', kind: '知识', text: REL_HIGH.text, entities: REL_HIGH.entities, weight: 20 })
-  const res = await I.queryEntries('镜像源下载', 10, { mode: 'exact', minWeight: 0 })
+  const res = await I.queryEntries('镜像源下载', 10, { minWeight: 0 })
   const seen = res.map((e) => e.fp)
   assert.ok(seen.includes('eo-relevant') && seen.includes('eo-marginal'), `两条都应命中（实际 ${seen}）`)
   assert.equal(seen[0], 'eo-relevant', `更相关者应第一（实际 ${seen}）`)
@@ -95,52 +95,36 @@ const TIE_HIGH = {
 test('exact：相关度同分时高 weight 在前（weight 未被架空）', async () => {
   const q = '同分排序验证'
   assert.equal(
-    embed.exactRelevance(q, TIE_LOW).relevance,
-    embed.exactRelevance(q, TIE_HIGH).relevance,
+    R.exactRelevance(q, TIE_LOW).relevance,
+    R.exactRelevance(q, TIE_HIGH).relevance,
     '构造前提：两者相关度完全相同'
   )
-  const res = await embed.search({ query: q, mode: 'exact', entries: [TIE_LOW, TIE_HIGH], topN: 5, weightCap: CAP })
+  const res = R.exactSearch(q, [TIE_LOW, TIE_HIGH], 5, 0.1, { weightCap: CAP })
   assert.equal(ids(res)[0], 'tie-high', `同分应由 weight 定序（实际 ${ids(res)}）`)
   assert.ok(res[0].score > res[1].score, '分数应体现 weight 加成')
 })
 
 test('exact：空查询（浏览/list）仍按 weight 降序——既有契约不破', async () => {
-  const res = await embed.search({ query: '', mode: 'exact', entries: [TIE_LOW, TIE_HIGH], topN: 5, weightCap: CAP })
+  const res = R.exactSearch('', [TIE_LOW, TIE_HIGH], 5, 0.1, { weightCap: CAP })
   assert.equal(res.length, 2, '空查询应返回全部（浏览模式）')
   assert.equal(ids(res)[0], 'tie-high', `浏览应按 weight 降序（实际 ${ids(res)}）`)
 })
 
 // ============================================================================
-// 3. 与 semantic / hybrid 互不污染
+// 3. 语义检索已移除：不得再暴露任何向量/嵌入 API
 // ============================================================================
 
-test('三模式互不污染：exact 不读向量层、semantic 只看相似度、hybrid 仍按 RRF', () => {
-  // 语义最相关（rank 1）但 weight=1；weight=20 者与查询向量正交
+test('检索层不再暴露向量/语义 API（防语义检索回归）', () => {
   const relEntry = { entry_id: 'mix-rel', fp: 'mix-rel', text: '深色模式偏好设置：镜像源下载', summary: '', entities: [], weight: 1, status: 'active' }
   const heavyEntry = { entry_id: 'mix-heavy', fp: 'mix-heavy', text: '界面配色无关条目', summary: '', entities: ['镜像源下载'], weight: 20, status: 'active' }
-  const dir = new Float32Array(512); dir[0] = 1
-  const orth = new Float32Array(512); orth[1] = 1
-  const vecs = [{ entry: relEntry, vec: dir }, { entry: heavyEntry, vec: orth }]
-  const q = '镜像源下载'
-
-  // exact：只吃关键词相关度，向量层有/无都不影响（不互相污染 + 不依赖模型）
-  const exactPure = embed.exactSearch(q, [relEntry, heavyEntry], 5, 0.1, { weightCap: CAP })
-  assert.equal(ids(exactPure)[0], 'mix-rel', `exact 应按相关度（实际 ${ids(exactPure)}）`)
+  const exactPure = R.exactSearch('镜像源下载', [relEntry, heavyEntry], 5, 0.1, { weightCap: CAP })
+  assert.equal(ids(exactPure)[0], 'mix-rel', `应按相关度（实际 ${ids(exactPure)}）`)
   assert.deepEqual(ids(exactPure), ['mix-rel', 'mix-heavy'], '高 weight 擦边命中者不得反超')
 
-  // semantic：纯相似度排序（吃向量），与 weight 无关
-  const sem = embed.semanticTopK(dir, vecs, 5, 0.1)
-  assert.equal(ids(sem)[0], 'mix-rel', `语义最相似者应第一（实际 ${ids(sem)}）`)
-  assert.ok(sem[0].sim > sem[1].sim, '相似度应递减')
-
-  // hybrid：RRF 融合——用新的 exact rank 仍不得让 weight 淹没排名信号
-  const fused = embed.hybridFuse(exactPure, sem, [relEntry, heavyEntry], 2, { weightCap: CAP })
-  assert.equal(ids(fused)[0], 'mix-rel', `融合后仍应按排名（实际 ${ids(fused)}）`)
-  for (const r of fused) assert.ok(r.score < 0.1, `融合分数应停留在 RRF 量级（${r.score}）`)
-  // weight 项被限幅为 RRF 基分的 50%：heavy 条目总分 = 其 RRF 基分 × 1.5（不是 ×(1+γ·weight)）
-  const baseHeavy = (0.3 + 0.5) / (60 + 2)
-  const totalHeavy = fused.find((r) => r.entry.entry_id === 'mix-heavy').score
-  assert.ok(Math.abs(totalHeavy - baseHeavy * 1.5) < 1e-12, `weight 加成应恰好限幅在 +50%（${totalHeavy} vs ${baseHeavy * 1.5}）`)
+  for (const name of ['semanticTopK', 'hybridFuse', 'getExtractor', 'embed', 'semanticSearch', 'tfidfVectors']) {
+    assert.equal(R[name], undefined, `retrieve.mjs 不应再导出 ${name}`)
+    assert.equal(I[name], undefined, `index.mjs 不应再导出 ${name}`)
+  }
 })
 
 // ============================================================================
@@ -157,7 +141,7 @@ test('exact：确定性——同输入两次一致，输入乱序结果一致', 
     // p-f 与 p-b 相关度、weight 完全相同（同分），只能靠 created_at → entry_id 收敛
     { entry_id: 'p-f', text: '另一条', summary: '镜像源下载', entities: [], weight: 4, status: 'active' },
   ]
-  const run = (entries) => embed.exactSearch('镜像源下载', entries, 10, 0.1, { weightCap: CAP })
+  const run = (entries) => R.exactSearch('镜像源下载', entries, 10, 0.1, { weightCap: CAP })
     .map((r) => `${r.entry.entry_id}:${r.score}:${r.relevance}`)
 
   const first = run(pool)

@@ -34,6 +34,7 @@ export const DEFAULTS = {
   autoDreamDays: 7,       // 启动时距上次代谢 ≥ 此天数 → 自动执行（0=关闭）
   autoReflectDays: 3,     // 启动时距上次反思 ≥ 此天数 → 自动执行（0=关闭）
   conflictOverlap: 3,     // 冲突仲裁：行为与单条偏好的专有双字重叠阈值（P0-003 二次验证）
+  preloadEmbeddings: false, // v0.8.0：启动时是否预建向量索引（旧行为=每次启动强制加载 ~24MB 嵌入模型；默认关）
   nearDuplicateThreshold: 0.7, // v0.8.0：写入去重——与已有同类条目的中文 bigram Jaccard ≥ 此值时不再新增（0=关闭；
                                // 实测「换了说法的同一件事」约 0.7~0.8，完全改写才会低于 0.6）
   nearDuplicateAction: 'merge', // v0.8.0：命中近重复怎么办——merge=合并进已有条目（追加「补充·日期」并提权，借鉴 @zheexinn/dsh-memory）/ skip=只提示不写
@@ -82,42 +83,18 @@ export function loadConfig() {
     if (!raw.trim()) return { ...DEFAULTS }
     const saved = JSON.parse(raw)
     const merged = { ...DEFAULTS }
-    // 2026-09-24 修复（根因：读路径只认数值，非数值字段一律被 continue 丢掉）：
-    //   旧实现除 petEndpoint 外一律 Number()，于是 approvalFallback='auto'→Number=NaN→丢弃→落回
-    //   默认 'deny'（fail-closed 意外生效，重要记忆写入被静默拒绝）；extractProvider/extractModel
-    //   这类字符串被清空（按需抽取永久报「未配置抽取模型」）；preloadEmbeddings=true→丢弃→false
-    //   （预热失效）；nearDuplicateAction='skip'→丢弃→merge；autoDreamDays=3 能读但 0 会被丢。
-    //   ★教训：写路径按类型处理时，读路径必须逐字段对齐同一套类型规则——两处只改一处等于没改。
     for (const k of Object.keys(DEFAULTS)) {
       const v = saved[k]
-      if (v === undefined) continue
-      switch (k) {
-        case 'approvalFallback':
-          // 枚举：只认 'auto'（自动写入）/'deny'（fail-closed），其余保持默认
-          if (v === 'auto' || v === 'deny') merged[k] = v
-          break
-        case 'petEndpoint':
-          merged[k] = typeof v === 'string' && v ? v : null
-          break
-        case 'extractProvider':
-        case 'extractModel':
-          // 字符串：trim 后按原文保留（空串=未配置，由调用方给出明确错误）
-          merged[k] = typeof v === 'string' ? v.trim() : ''
-          break
-        case 'nearDuplicateAction':
-          merged[k] = v === 'skip' ? 'skip' : 'merge'
-          break
-        case 'autoDreamDays':
-        case 'autoReflectDays':
-          // 0=关闭，必须能读回 0（旧实现 n>0 才赋值会把 0 丢掉）
-          if (Number.isFinite(Number(v)) && Number(v) >= 0) merged[k] = Number(v)
-          break
-        default:
-          // 其余为数值项：只接受有限正数（保持原语义）
-          if (Number.isFinite(Number(v)) && Number(v) > 0) merged[k] = Number(v)
-          break
+      if (k === 'approvalFallback') {
+        if (v === 'auto' || v === 'deny') merged[k] = v
+        continue
       }
+      if (v === undefined || !Number.isFinite(Number(v))) continue
+      const n = Number(v)
+      if (k === 'autoDreamDays' || k === 'autoReflectDays') { if (n >= 0) merged[k] = n } // 0=关闭
+      else if (n > 0) merged[k] = n
     }
+    if (typeof saved.petEndpoint === 'string') merged.petEndpoint = saved.petEndpoint
     return merged
   } catch {
     return { ...DEFAULTS }

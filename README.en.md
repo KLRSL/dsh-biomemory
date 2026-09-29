@@ -4,7 +4,7 @@
 >
 > [简体中文](README.md) · [English](README.en.md)
 
-> **v0.8.2** · MIT License · DSH ≥ 0.1.1-rc.2 (verified on 0.1.2-rc.1, 0.1.5-rc.1 and 0.1.5-rc.2) · Node ≥ 22.19.0
+> **v0.9.0** · MIT License · DSH ≥ 0.1.1-rc.2 (verified on 0.1.5-rc.1, 0.1.5-rc.2 and **0.2.0-rc.2 (Desktop)**) · Node ≥ 22.19.0
 >
 > ⚠️ Node note: this plugin uses `node:sqlite`. Verified on **Node 24.19**; on Node 22.x the module **may still require `--experimental-sqlite`** (no 22.x available here, so unverified). If startup reports `node:sqlite` unavailable, upgrade to 24.x or pass that flag.
 
@@ -21,7 +21,7 @@ A cross-session memory plugin for [DeepSeek Harness](https://github.com/deepseek
 | Deep reflection | Topic clustering / trend statistics / conflict alerts / forget candidates — purely local, no LLM; reports written to `longterm/reflections/` |
 | Memory classes | Auto-inferred `memory_class`: user_decision / user_preference / fact / model_suggestion / model_inference (a suggestion ≠ a decision) |
 | Source traceability | `source_ref` records provenance (`session:<id>` by default); structured audit log with a 5-tuple (time / actor / event / entry / detail) |
-| Semantic retrieval | Local embedding model bge-small-zh-v1.5 (512-dim, offline) when available; pure-JS TF-IDF + cosine fallback; exact / semantic / hybrid modes |
+| Deterministic retrieval | One path: field-weighted keyword relevance (text 1.0 / summary 0.5 / entities 0.25) + bounded occurrence bonus + bounded weight bonus (≤50%). v0.9.0 removed the embedding model and the semantic/hybrid modes |
 | Fully editable | Every entry can be edited, removed, or restored (database backed up before removal); a single `.db` file holds everything and can be inspected with standard tools |
 | Native-module free | `node:sqlite` built-in + pure JS — no native module conflicts; five-tab "Memory Workbench" admin UI follows the DSH theme including dark mode |
 
@@ -67,8 +67,8 @@ ls ~/.dsh/biomemory/
 # ① Save a user preference (important memory → human approval; stored once approved)
 memory action=add track=user text="User prefers domestic mirrors for downloads" source="user statement"
 
-# ② Query (hybrid = exact + semantic fusion, the default)
-memory action=query text="mirror" mode=hybrid topK=5
+# ② Query (deterministic relevance ranking)
+memory action=query text="mirror" topK=5
 
 # ③ Correct an entry (text only; metadata preserved)
 memory action=update fp="a1b2c3" text="User prefers domestic mirrors (Tsinghua pip / npmmirror)"
@@ -96,7 +96,7 @@ memory action=audit aggregate=true groupBy=action
 | Action | Parameters | Description |
 | --- | --- | --- |
 | `add` | `text` (required), `track`=user\|agent, `source` | Save a memory; important entries request approval, falling back per `approvalFallback` |
-| `query` | `text`, `mode`=hybrid\|exact\|semantic, `topK`, `minWeight`, `projectId`, `fragmentTypes`, `includeArchived` | Retrieve; hits are consolidated (use-it-or-lose-it) |
+| `query` | `text`, `topK`, `minWeight`, `projectId`, `fragmentTypes`, `includeArchived` (`mode` is deprecated and ignored since v0.9.0) | Retrieve; hits are consolidated (use-it-or-lose-it) |
 | `update` | `fp`, `text` | Edit an entry (metadata such as pin/weight preserved; stale vector cleared; `UPDATE` audited) |
 | `remove` | `fp` | Delete an entry (database backed up first; restorable) |
 | `restore` | `fp` | Restore a deleted entry from the newest backup |
@@ -110,7 +110,7 @@ Examples:
 
 ```text
 memory action=add track=user text="The official name is 'DaFeiYu'; do not use old names" source="user statement"
-memory action=query text="UI rendering width rules" mode=hybrid topK=10 minWeight=0.1 fragmentTypes=decision,preference
+memory action=query text="UI rendering width rules" topK=10 minWeight=0.1 fragmentTypes=decision,preference
 memory action=audit type="DECAY" sinceDays=7
 memory action=audit aggregate=true groupBy=day
 ```
@@ -130,7 +130,7 @@ memory_recall text="the versioning rules we settled on"
 | Command | Description |
 | --- | --- |
 | `/memory list` | List all entries (conflicts surfaced at the top) |
-| `/memory query <term>` | Keyword + semantic search |
+| `/memory query <term>` | Keyword search |
 | `/memory add <content>` | Write directly (human-initiated, no approval) |
 | `/memory edit <fp> <new text>` | Edit an entry |
 | `/memory remove <fp>` | Delete an entry (restorable) |
@@ -199,9 +199,19 @@ memory action=audit type="DECAY" sinceDays=7
 memory action=audit aggregate=true groupBy=action   # aggregated stats
 ```
 
-### Semantic retrieval
+### Retrieval
 
-Keyword matching runs first; when hits are insufficient, a pure-JS **TF-IDF + cosine** implementation supplements recall (no native modules, fully offline). When the local embedding model (bge-small-zh-v1.5, 512-dim, at `~/.dsh/models/`) is available, retrieval upgrades to **hybrid** fusion (RRF variant); if the model is missing or fails to load, retrieval degrades to keyword search and memory features remain unaffected. Semantic hits are marked "semantic" in output.
+**Single deterministic mode** (since v0.9.0): entries are ranked by relevance,
+`score = relevance · (1 + 0.5 · min(weight, weightCap) / weightCap)`, where
+`relevance = Σ field weights that matched (text 1.0 / summary 0.5 / entities 0.25) + 0.1 · min(occurrences, 5)`.
+Ties break by weight desc → created_at desc → entry_id asc, so ordering is a **total order and deterministic**.
+
+Keyword-less queries (`list` browsing) sort by weight desc and float behavior memories that conflict with a preference to the top.
+
+> v0.9.0: the local embedding model (bge-small-zh-v1.5) and the `semantic`/`hybrid` modes were removed — they required
+> downloading ~90MB of ONNX weights and pulled in `@huggingface/transformers` + onnxruntime. Keyword retrieval is
+> fully offline, dependency-free and reproducible, which is sufficient. `tokenize` and term-frequency cosine remain,
+> serving `dream`'s topic clustering.
 
 ## Configuration
 
@@ -231,9 +241,8 @@ Editable in the Settings tab, or via `POST /biomemory/api/config`; persisted as 
 | `GET /config` · `POST /config` | Read / update configuration (whitelisted fields; `reset:true` restores defaults) |
 | `POST /dream` | Run metabolism (body `{ "dryRun": true }`) |
 | `POST /reflect` | Run deep reflection (body `{ "dryRun": true }`) |
-| `GET /entries` | List entries (`q` query / `layer` layer / `mode` retrieval mode / `limit` cap) |
+| `GET /entries` | List entries (`q` query / `layer` layer / `limit` cap) |
 | `POST /entries/pin` · `/unpin` · `/remove` · `/restore` · `/update` | Entry management (body carries `fp` etc.) |
-| `POST /vectors` · `GET /vectors` | Trigger vectorization / query vectorization status |
 | `GET /audit` · `GET /audit/aggregate` | Audit query (`sinceDays`/`type`) / aggregation (`groupBy`) |
 
 ### Notifications (optional)
@@ -246,7 +255,6 @@ After configuring `petEndpoint`, memory-save events are pushed to a local deskto
 | --- | --- | --- |
 | `DSH_BIOMEMORY_DIR` | `~/.dsh/biomemory` | SQLite data directory |
 | `DSH_MEMORY_ROOT` | `~/.dsh/memory` | Legacy Markdown root (migration source & read-only backup) |
-| `DSH_MODELS_ROOT` | `~/.dsh/models` | Local embedding model directory |
 | `DSH_MEMORY_DEBUG` | — | Writes debug logs when set to `1` |
 
 ## Compatibility
@@ -262,6 +270,7 @@ After configuring `petEndpoint`, memory-save events are pushed to a local deskto
 
 | Version | Date | Highlights |
 | --- | --- | --- |
+| **v0.9.0** | 2026-09-29 | **Embedding model and semantic retrieval removed (user decision)**: query collapses to a single deterministic relevance ranking; `embed.mjs`, the `@huggingface/transformers` dependency and the `preloadEmbeddings` config are gone (node_modules 410.5MB → 20.1MB, no ~90MB local ONNX model); the `db` vector API and `/vectors` endpoint were removed (`entries.vector` is kept for database compatibility); the settings page drops the mode selector and model card; `tokenize` and term-frequency cosine stay (used by `dream` clustering). **DSH 0.2.0-rc.2 adaptation**: the client half no longer requires any Harness Client package (official practices.md §UI rule 1) — Button/Input/9 icons are vendored inline; `dsh.client.inject` drops the non-existent `@deepseek-ai/dsh-client-runtime`; new `tests/no-harness-client-imports.test.mjs` guards. 95/95 tests pass |
 | **v0.8.2** | 2026-09-20 | **Config keys are now stored by type (found on a live install)**: the settings page's POST /config coerced every key through `Number()` except petEndpoint/approvalFallback, so the **string** keys extractProvider/extractModel were stored as 0 (`String(0) = "0"` was then used as a provider name → NO_ADAPTER, and the page rendered them blank because `0 || ""` is empty) and the **boolean** preloadEmbeddings became 0/1. Writing now distinguishes string / enum / boolean / numeric keys: strings are trimmed, enums fall back to an allow-list, booleans accept true/1/'1'/'true', numbers must be non-negative. Verified on the **running plugin** (POST → GET → on-disk config agree): extractProvider=deepseek-official, extractModel=deepseek-flash, preloadEmbeddings=true; the zero-token preview returned a 1616-character transcript of the current session |
 | **v0.8.1** | 2026-09-20 | **Conflict-ruling loop + on-demand extraction + honest UI**: ①`superseded` stops being a never-written dead value and becomes **superseded by a human ruling** — same effect as `archived` (leaves injection and retrieval) but a different reason; `allEntries`/`entriesWithVectors` now only take `active`; new `setEntryStatus` unifies archive/supersede/reactivate with `SUPERSEDE`/`ARCHIVE-MANUAL`/`REACTIVATE` audits; new `GET /superseded` plus Supersede/Restore buttons in the UI (conflicts previously had a red badge and no way out). ②**On-demand extraction button**: `POST /api/extract` reads `ctx.sessions.get(id).deriveMessages()` and calls the model through `ctx.llm.stream` (reusing the DSH provider); candidates go through the same fingerprint dedup and near-duplicate merge, and Preview costs zero tokens. ③**Honest UI**: the model card has three states (not-loaded / 512-dim / degraded) and the audit card footnote no longer shows unrelated data. ④Compliance: client bundle moved to `lib/client.js`, bundle entry id unified to the package name. 98 tests green |
 | **v0.8.0** | 2026-09-20 | **Auto-metabolism fix (real defect, caused data loss)**: ①the auto-`dream` interval check used `store.latestBackup()`, which reads the pre-single-track Markdown backup dir (`MEMORY_ROOT/backups/<12-digit dirs>`) that stopped being produced in v0.6.4 → always `null` → **a full dream ran on every plugin load** (109 runs measured, up to 26 in one day); ②`runDream` decayed with `w × 0.5^(age/halfLife)` using the *already decayed* current weight times the full-age factor = **compounding decay**, so repeated runs accelerated exponentially → 19 behavioural memories (including several merged composite entries) were pushed below `decayThreshold` and wrongly archived. Fix: the check now reads `lastDreamAt` / `lastReflectAt` from the meta table (written when dream/reflect finish; no file mtime involved); decay became **incremental and idempotent** — base = `max(created_at, last metabolism)`, and `DECAY` is recorded only when the stored precision (1 decimal) actually drops. New `store.unarchiveEntry(fp, {weight})` (archived row → `active` with weight repair, audited `UNARCHIVE`) plus the `bm-restore-archived.cjs` maintenance script (dry-run by default); all 19 wrongly archived entries were restored. **Same batch**: `setPinFp` zeroed `weight` when pinning (un-pinning instantly dropped below threshold) → weight is no longer touched (skip-decay is enforced by `runDream`); `removeByFp` also ran `DELETE FROM audit_log` (deleting an entry erased its audit trail) → removed; `/status` `auditCount` used `queryAudit({})` with the default `limit=50` → always ≤50, now `limit: 100000`; `retrieve` counted hits for **every** returned entry (contradicting the "only real keyword recalls consolidate" comment) → only keyword hits count; the embedding model had no negative cache and `apply` forced `ensureVectors` 100ms after start (loading the ~24MB onnx model on every launch) → negative cache + truly lazy loading (`preloadEmbeddings` defaults to `false`; set `true` or `DSH_BIOMEMORY_PRELOAD=1` to warm up); `PRAGMA busy_timeout=5000` for multi-process access; the Markdown migration no longer mis-parses the sync mirror `条目镜像.md` and `reflections/`. **Dead code removed**: `rewriteFile` / `findByText` / `backupNow` / `latestBackup` (the very trigger of this defect) / `embedMany` / `isModelReady` / `embedTextOf` / `db.getById` / `db.listPinned` / `session-state.getSummarySid`. New regression tests in `tests/dream-idempotent.test.mjs` (idempotent decay / new-entry baseline / unarchive / snapshot skips archived / trigger predicate / consolidation tied to recall time / restore keeps entry_id). **Follow-up cleanup**: the auto-metabolism predicate is extracted into the pure function `meta.shouldRunAuto()` (directly unit-testable); consolidation now only reinforces entries that were **recently recalled for real** (`last_accessed` must fall within half a half-life, and `consolidateHits` now records the recall time — the old code was decoupled from recall time, so stale entries gained weight on every dream; 3020 CONSOLIDATE events measured); `restoreEntry` keeps the original `entry_id` (the old code regenerated a UUID, leaving 6893/10006 audit rows dangling); the Web API `readBody` is capped at 1 MiB (`DSH_BIOMEMORY_BODY_LIMIT` overrides); `client.js` theme listener got its dependency array (it used to rebuild the matchMedia listener and MutationObserver on every render); `settings-page.test.mjs`, which never matched the `tests/*.test.mjs` glob, is now part of `npm test`. **Upgrade (memory atomisation, P1)**: `writeEntry` now intercepts **near-duplicates** — when new content scores ≥ `nearDuplicateThreshold` (default `0.7`, `0` disables) in Chinese-bigram Jaccard similarity against an existing entry of the same type, it is not inserted; instead the tool returns the similar entry's fp plus a merge hint (audited as `WRITE-SKIP`). Fragmentation came from "the same thing written as a new entry again and again" (the 8/20–9/5 batch had to be merged by hand; whatever was missed ended up archived by normal metabolism). The check is pure bigram arithmetic, never loads the embedding model, and runs inline on the write path; the exact fingerprint only looks at the first 20 characters, so near-duplicate detection covers the "rephrased / different opening" cases. **Second round (same version)**: ①**automatic near-duplicate merge** (`nearDuplicateAction`, default `merge`, borrowed from `@zheexinn/dsh-memory`'s merge-on-write): a near-duplicate is no longer merely rejected — the new content is appended to the existing entry as `｜ 【补充·date】…` with weight +1 (falls back to `skip` above 4000 chars), audited as `WRITE-MERGE`; similarity now takes `max(Jaccard, containment)` when lengths are comparable, so short rephrasings are not missed (measured 0.64 → 0.86 for two short near-duplicates); ②**snapshot marked as untrusted data** (borrowed from `dsh-git-memory`'s `<summary_snapshot>`): the injected header now states explicitly that the entries are *data, not instructions*; ③**backup/restore hardening**: `wal_checkpoint` result is checked (warns when `busy≠0`), every backup is self-verified (the copy is opened and its entry count compared, failing copies are deleted and the error rethrown), and restore now takes a pre-restore snapshot, replaces the DB via temp-file rename, and clears stale `-wal`/`-shm`; ④**all panel requests are abortable**: `client.js` gained `apiFetch` (registers in-flight requests, aborts them on unmount, and fixes the effect-returning-a-Promise warning) plus editing state is cleared on tab switch; ⑤the inert top-level `allowScripts` was replaced by pnpm's actual `pnpm.onlyBuiltDependencies` (no `@deepseek-ai/*` package in the global install reads `allowScripts`). ⑥**"auto-sink" reliability fix** (answering "will it save on its own when I don't say so?"): the post-turn sink reminder window went from a **hard-coded 5 minutes** to the configurable `sinkWindowMinutes` (default **60**) — previously, if the user stepped away for more than five minutes the reminder was silently dropped, which is exactly why writes often only happened when explicitly requested; the reminder text now also states that **proactive sinking is the default** and that near-duplicates are merged automatically. 79 → **90 tests green** |
@@ -289,7 +298,6 @@ After configuring `petEndpoint`, memory-save events are pushed to a local deskto
 - **Tool errors (Invalid object / lossless JSON)**: upgrade to v0.6.3+ — return values are now compatible with the new strict validation.
 - **Important memories are refused / not saved**: since v0.6.5 the approval gate is fail-closed — a missing approval service, a throwing `approval.request`, or any non-grant outcome (rejected/cancelled/unavailable) denies the write and logs an `APPROVAL-UNAVAILABLE` audit entry. To keep the old auto-save behavior, set `approvalFallback: "auto"` explicitly in the settings page or `biomemory.config.json`.
 - **undefined in audit / entry lists**: fixed in v0.6.5 (`/memory audit` now maps `action/entry_id/detail`; `GET /entries` exposes `hits/pinned/mode/ts/kind` and applies the layer filter when `q` is present).
-- **Semantic retrieval unavailable**: check that the model exists at `~/.dsh/models/bge-small-zh-v1.5`; when missing, retrieval degrades to keyword + TF-IDF and memory features keep working.
 - **Write failures**: check read/write permissions for `~/.dsh/biomemory/` (and `DSH_BIOMEMORY_DIR`); if approval is rejected, check the approval policy and `approvalFallback`.
 - **Where did my legacy Markdown memories go?**: they were migrated into SQLite automatically on first start; `~/.dsh/memory/` remains as a read-only backup and is not deleted.
 - **Can a deleted entry be recovered?**: the database is backed up before each removal (last 7 kept) — run `/memory undo <fp>` or `memory action=restore fp=...`.

@@ -285,51 +285,9 @@ export function allEntries({ includeArchived = false } = {}) {
   return db.prepare(sql).all().map(fromRow)
 }
 
-// ---------- 向量 ----------
-
-/** 写向量（Float32Array → BLOB）；id 可为 entry_id 或 fp */
-export function setVector(id, vec) {
-  const db = openDb()
-  const buf = Buffer.from(vec.buffer, vec.byteOffset, vec.byteLength)
-  const byId = db.prepare('UPDATE entries SET vector = ? WHERE entry_id = ?').run(buf, id)
-  if (byId.changes === 0) {
-    db.prepare('UPDATE entries SET vector = ? WHERE fp = ?').run(buf, id)
-  }
-}
-
-/** 批量写向量（迁移/重建用）；id 可为 entry_id 或 fp */
-export function setVectorsBatch(pairs) {
-  const db = openDb()
-  const stmtId = db.prepare('UPDATE entries SET vector = ? WHERE entry_id = ?')
-  const stmtFp = db.prepare('UPDATE entries SET vector = ? WHERE fp = ?')
-  let ok = 0
-  for (const [id, vec] of pairs) {
-    const buf = Buffer.from(vec.buffer, vec.byteOffset, vec.byteLength)
-    const r = stmtId.run(buf, id)
-    if (r.changes === 0) {
-      const r2 = stmtFp.run(buf, id)
-      if (r2.changes > 0) ok++
-    } else {
-      ok++
-    }
-  }
-  return ok
-}
-
-/** 读取全部带向量的条目：返回 [{ entry, vec: Float32Array }] */
-export function entriesWithVectors({ includeArchived = false } = {}) {
-  const db = openDb()
-  const sql = includeArchived
-    ? 'SELECT * FROM entries WHERE vector IS NOT NULL'
-    : "SELECT * FROM entries WHERE vector IS NOT NULL AND status = 'active'"
-  return db.prepare(sql).all().map((r) => ({ entry: fromRow(r), vec: new Float32Array(r.vector.buffer, r.vector.byteOffset, r.vector.byteLength / 4) }))
-}
-
-/** 向量数（索引规模统计） */
-export function vectorCount() {
-  const db = openDb()
-  return db.prepare('SELECT COUNT(*) c FROM entries WHERE vector IS NOT NULL').get().c
-}
+// ---------- 向量：已于 v0.9.0 随语义检索一起移除 ----------
+// `entries.vector` 列保留在 schema 中仅为兼容既有数据库（避免破坏性重建），
+// 运行期不再读写；相关 API（setVector/setVectorsBatch/entriesWithVectors/vectorCount）已删除。
 
 // ---------- 审计 ----------
 

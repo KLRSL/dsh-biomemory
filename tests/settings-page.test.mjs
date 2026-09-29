@@ -1,7 +1,7 @@
 // ============================================================================
 // test-settings-page.mjs — dsh-biomemory 记忆工作台（现代极简）渲染冒烟
 // 运行: node tests\test-settings-page.mjs
-// 验证: 五 tab / 概览状态卡 / 构成图表 / 模式分段按钮 / 记忆流条目 / 知识库
+// 验证: 五 tab / 概览状态卡 / 构成图表 / 无模式分段按钮（v0.9.0 起） / 记忆流条目 / 知识库
 // ============================================================================
 import { JSDOM } from 'jsdom'
 import { readFileSync } from 'node:fs'
@@ -148,9 +148,9 @@ console.log('\n[2] 概览：状态卡')
 {
   const cards = [...document.querySelectorAll('.bm-card .v')]
   const values = cards.map((c) => c.textContent)
-  check('状态卡数值（151/15/512维/26）', values.some((v) => v === '151') && values.some((v) => v === '15') && values.some((v) => v === '512维') && values.some((v) => v === '26'), values.join(','))
+  check('状态卡数值（151/15/26）', values.some((v) => v === '151') && values.some((v) => v === '15') && values.some((v) => v === '26'), values.join(','))
   const labels = [...document.querySelectorAll('.bm-card .l')].map((l) => l.textContent)
-  check('状态卡标签（全部记忆/锁定/嵌入模型）', labels.some((l) => l.includes('全部记忆')) && labels.some((l) => l.includes('锁定')) && labels.some((l) => l.includes('嵌入模型')), labels.join(','))
+  check('状态卡标签（全部记忆/锁定/代谢健康）', labels.some((l) => l.includes('全部记忆')) && labels.some((l) => l.includes('锁定')) && labels.some((l) => l.includes('代谢健康')), labels.join(','))
 }
 
 console.log('\n[3] 概览：记忆构成（行内紧凑条）')
@@ -165,11 +165,10 @@ console.log('\n[3] 概览：记忆构成（行内紧凑条）')
   check('行含标签+数值+百分比', rowText.includes('fact') && rowText.includes('preference') && rowText.includes('≥10') && rowText.includes('%'), rowText.slice(0, 120))
 }
 
-console.log('\n[4] 记忆流：模式分段按钮 + 搜索')
+console.log('\n[4] 记忆流：搜索（v0.9.0 起已无模式分段按钮）')
 {
   const modeBtns = [...document.querySelectorAll('.bm-mode-btn')]
-  check('三个分段按钮（hybrid/exact/semantic）', modeBtns.length === 3 && modeBtns[0].textContent.includes('hybrid'), modeBtns.map((b) => b.textContent).join(','))
-  check('hybrid 默认激活', modeBtns[0].classList.contains('active'))
+  check('模式分段按钮已移除（语义检索下线）', modeBtns.length === 0, String(modeBtns.length))
   const input = document.querySelector('.bm-search-row input')
   check('搜索框存在且带占位', !!input && input.placeholder.includes('搜记忆'), input && input.placeholder)
   const searchBtn = [...document.querySelectorAll('.bm-search-row button')]
@@ -201,13 +200,10 @@ console.log('\n[5] 记忆流：条目列表（无前缀标记）')
   }
 }
 
-console.log('\n[6] 切换模式按钮（exact）')
+console.log('\n[6] 模式选择器已彻底移除')
 {
-  const modeBtns = [...document.querySelectorAll('.bm-mode-btn')]
-  modeBtns[1].click()
-  await tick()
-  check('exact 激活', modeBtns[1].classList.contains('active'))
-  check('hybrid 取消激活', !modeBtns[0].classList.contains('active'))
+  check('DOM 中不存在 .bm-mode-btn', document.querySelectorAll('.bm-mode-btn').length === 0)
+  check('DOM 中不存在 .bm-mode-row', document.querySelectorAll('.bm-mode-row').length === 0)
 }
 
 console.log('\n[7] 知识库 tab')
@@ -218,7 +214,7 @@ console.log('\n[7] 知识库 tab')
   const h4 = document.querySelector('.bm-block h4')
   check('知识库标题', !!h4 && h4.textContent.includes('知识库'))
   const kbModeBtns = [...document.querySelectorAll('.bm-mode-btn')]
-  check('知识库也有模式分段按钮', kbModeBtns.length === 3)
+  check('知识库同样无模式分段按钮', kbModeBtns.length === 0)
   const kbInput = document.querySelector('.bm-toolbar input')
   check('知识库搜索框', !!kbInput)
 }

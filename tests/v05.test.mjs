@@ -1,5 +1,5 @@
 // ============================================================================
-// dsh-biomemory v0.5 专项测试：SQLite 数据层 / 迁移 / 三模式检索 / RRF / 向量
+// dsh-biomemory v0.5 专项测试：SQLite 数据层 / 迁移 / 确定性检索 / 审计 / 备份
 // 运行: node --test tests\v05.test.mjs
 // ============================================================================
 
@@ -16,7 +16,6 @@ process.env.DSH_BIOMEMORY_DIR = path.join(tmpDir, 'biomemory')
 const mod = await import('../index.mjs')
 const I = mod.__internals
 const db = await import('../db.mjs')
-const embed = await import('../embed.mjs')
 
 before(() => {
   db.openDb()
@@ -97,7 +96,7 @@ test('迁移：Markdown 条目导入 SQLite 且幂等', () => {
 })
 
 // ============================================================================
-// 3. 三模式检索（exact / semantic / hybrid）+ RRF
+// 3. 确定性检索（v0.9.0 起为唯一检索方式；semantic / hybrid 已移除）
 // ============================================================================
 
 const SAMPLE_ENTRIES = [
@@ -106,71 +105,22 @@ const SAMPLE_ENTRIES = [
   { entry_id: 's3', fp: 's3', text: '用户偏好深色模式的代码编辑器', summary: '', entities: [], weight: 7, status: 'active', fragment_type: 'preference' },
 ]
 
-test('exact：关键词精确匹配', async () => {
-  const res = await embed.search({ query: '10.0.0.5', mode: 'exact', entries: SAMPLE_ENTRIES, topN: 3 })
-  assert.equal(res[0].entry.entry_id, 's2')
+test('精确检索：关键词命中并排序', async () => {
+  for (const e of SAMPLE_ENTRIES) db.upsertEntry(e)
+  const res = await I.queryEntries('端口 8080', 10)
+  assert.equal(res[0].fp, 's2')
+  const dark = await I.queryEntries('深色', 10)
+  assert.ok(dark.some((e) => e.fp === 's1' || e.fp === 's3'), `深色相关应命中（实际 ${dark.map((e) => e.fp)}）`)
+  // 词不相同即不命中：旧「语义近义」行为随嵌入模型一并移除
+  const none = await I.queryEntries('完全无关的查询词xyz', 10)
+  assert.equal(none.length, 0, '无关查询不应返回条目')
 })
 
-test('semantic：语义近义命中（词不同意相近）', async () => {
-  const res = await embed.search({ query: '深色模式偏好', mode: 'semantic', entries: SAMPLE_ENTRIES, vectorEntries: null, topN: 3 })
-  // 模型不可用时降级 exact 也应有结果（不崩）
-  assert.ok(res.length >= 0)
-})
-
-test('hybrid：RRF 融合排序', async () => {
-  // 构造带向量的 entries（真实模型）
-  const withVec = []
-  for (const e of SAMPLE_ENTRIES) {
-    const vec = await embed.embed(e.text)
-    withVec.push({ entry: e, vec })
-  }
-  const res = await embed.search({ query: '深色', mode: 'hybrid', entries: SAMPLE_ENTRIES, vectorEntries: withVec, topN: 3 })
-  assert.ok(res.length >= 1, 'hybrid 应有结果')
-  // 深色主题相关条目应排前
-  const ids = res.map((r) => r.entry.entry_id)
-  assert.ok(ids.includes('s1') || ids.includes('s3'), `深色相关应命中（实际 ${ids}）`)
-  // 无向量时降级 exact
-  const res2 = await embed.search({ query: '服务器', mode: 'hybrid', entries: SAMPLE_ENTRIES, vectorEntries: null, topN: 3 })
-  assert.equal(res2[0].entry.entry_id, 's2', '降级 exact 命中服务器')
-})
-
-test('queryEntries 三模式参数透传（index 层）', async () => {
-  for (const e of SAMPLE_ENTRIES) {
-    db.upsertEntry(e)
-    const vec = await embed.embed(e.text)
-    if (vec) db.setVector(e.entry_id, vec)
-  }
-  const exact = await I.queryEntries('端口 8080', 10, { mode: 'exact' })
-  assert.ok(exact.some((e) => e.fp === 's2'))
-  const hy = await I.queryEntries('深色', 10, { mode: 'hybrid' })
-  assert.ok(hy.length >= 1)
-  const sem = await I.queryEntries('暗色界面', 10, { mode: 'semantic' })
-  assert.ok(sem.length >= 1)
-})
-
-// ============================================================================
-// 4. 向量索引（ensureVectors / setVector / entriesWithVectors）
-// ============================================================================
-
-test('ensureVectors：为无向量条目补算嵌入', async () => {
-  // 清空向量
-  const conn = db.openDb()
-  conn.exec('UPDATE entries SET vector = NULL')
-  const r = await I.ensureVectors()
-  assert.ok(r.ok === true || r.reason === 'model-unavailable', `向量补算 ${JSON.stringify(r)}`)
-  if (r.ok) {
-    assert.ok(r.embedded >= 1, '至少补算一条')
-    assert.ok(db.vectorCount() >= 1, '向量数 ≥1')
-  }
-})
-
-test('entriesWithVectors：只返回带向量条目', () => {
-  const withVec = db.entriesWithVectors()
-  assert.ok(Array.isArray(withVec))
-  for (const { vec } of withVec) {
-    assert.ok(vec instanceof Float32Array, 'vec 是 Float32Array')
-    assert.equal(vec.length, 512, 'bge-small-zh 512 维')
-  }
+test('mode 参数已废弃：传入不改变结果，结果也不再带 semantic 标记', async () => {
+  const a = await I.queryEntries('深色', 10)
+  const b = await I.queryEntries('深色', 10, { mode: 'semantic' })
+  assert.deepEqual(b.map((e) => e.fp), a.map((e) => e.fp), 'mode 参数应被忽略')
+  for (const e of a) assert.equal('semantic' in e, false, '结果不应再含 semantic 字段')
 })
 
 // ============================================================================
@@ -217,17 +167,6 @@ test('backupDb：创建 .db 副本并保留最近 7 次', () => {
   const backups = db.listBackups()
   assert.ok(backups.length >= 2, '备份列表 ≥2')
   assert.ok(backups.length <= 7, '不超过 7 次')
-})
-
-// ============================================================================
-// 8. 模型信息（状态页用）
-// ============================================================================
-
-test('modelInfo：离线本地模型声明', () => {
-  const info = embed.modelInfo()
-  assert.equal(info.id, 'bge-small-zh-v1.5')
-  assert.equal(info.dim, 512)
-  assert.equal(info.offline, true)
 })
 
 // ============================================================================
@@ -334,55 +273,6 @@ test('stats 集成：dbPath/vectors/migration 可序列化', () => {
   assert.equal(typeof s.auditCount, 'number')
   const m = db.migrationStatus()
   assert.ok('migrated' in m)
-})
-
-// ============================================================================
-// 12. hybrid RRF 融合的 weight 归一（v0.6.5 缺陷修复）
-// ============================================================================
-
-test('hybridFuse：weight 归一到 RRF 量级——语义更相关者排在 weight 更高者之前', () => {
-  // 构造：A 语义最相关（rank 1）但 weight=1；B 只被语义排到第 2、weight=20。
-  // 旧实现 +γ·weight（γ=0.2 → 0.2~4.0）会让 B 碾压 A（RRF 单项仅 ≈0.005~0.008）。
-  const e1 = { entry_id: 'r1', fp: 'r1', text: '深色模式偏好设置', weight: 1, status: 'active', fragment_type: 'preference' }
-  const e2 = { entry_id: 'r2', fp: 'r2', text: '深色模式无关条目', weight: 20, status: 'active', fragment_type: 'fact' }
-  const all = [e1, e2]
-  const exactR = [{ entry: e1, rank: 1 }, { entry: e2, rank: 2 }]
-  const dir = new Float32Array(512); dir[0] = 1
-  const orth = new Float32Array(512); orth[1] = 1
-  const semR = [{ entry: e1, vec: dir, sim: 1, rank: 1 }, { entry: e2, vec: orth, sim: 0, rank: 2 }]
-  const res = embed.hybridFuse(exactR, semR, all, 2, { weightCap: 20 })
-  assert.equal(res[0].entry.entry_id, 'r1', `语义更相关者应第一（实际 ${res.map((r) => r.entry.entry_id)}）`)
-  const s1 = res.find((r) => r.entry.entry_id === 'r1').score
-  const s2 = res.find((r) => r.entry.entry_id === 'r2').score
-  assert.ok(s1 < 0.1 && s2 < 0.1, `总得分应停留在 RRF 量级（实际 ${s1} / ${s2}）`)
-  // 修复前：γ·weight 单独就有 0.2~4.0，已是 RRF 全量的数十倍
-  assert.ok(0.2 * 20 > 50 * (0.5 / 61), '量化对照：旧公式的 weight 项量级 ≫ RRF 单项（本用例的构造依据）')
-})
-
-test('search(hybrid)：低 weight 但语义更相关者排名更高（v0.6.5 端到端）', async () => {
-  const prevCap = I.getConfig().weightCap
-  I.setConfig({ weightCap: 20 }) // search() 用 CFG.weightCap，显式固定避免别的用例污染
-  try {
-    // 关键词只命中语义相关那条（避免 exact 的「同分按 weight 排序」干扰）；
-    // 高 weight 那条仅被语义路召回 → 旧实现下 weight 项足以反超。
-    const e1 = { entry_id: 'h1', fp: 'h1', text: '深色模式偏好设置', weight: 1, status: 'active', fragment_type: 'preference' }
-    const e2 = { entry_id: 'h2', fp: 'h2', text: '界面配色无关条目', weight: 20, status: 'active', fragment_type: 'fact' }
-    const dir = new Float32Array(512); dir[0] = 1
-    const orth = new Float32Array(512); orth[1] = 1
-    const res = await embed.search({
-      query: '深色模式',
-      mode: 'hybrid',
-      entries: [e1, e2],
-      vectorEntries: [{ entry: e1, vec: dir }, { entry: e2, vec: orth }],
-      topN: 2,
-    })
-    assert.equal(res[0].entry.entry_id, 'h1', `hybrid 应按语义/精确排名（实际 ${res.map((r) => r.entry.entry_id)}）`)
-    const s1 = res.find((r) => r.entry.entry_id === 'h1').score
-    const s2 = res.find((r) => r.entry.entry_id === 'h2').score
-    assert.ok(s1 < 0.1 && s2 < 0.1, `得分停留在 RRF 量级（实际 ${s1} / ${s2}）`)
-  } finally {
-    I.setConfig({ weightCap: prevCap })
-  }
 })
 
 // ============================================================================
