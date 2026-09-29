@@ -4,7 +4,7 @@
 >
 > [简体中文](README.md) · [English](README.en.md)
 
-> **v0.9.1** · MIT License · DSH ≥ 0.1.1-rc.2 (verified on 0.1.5-rc.1, 0.1.5-rc.2 and **0.2.0-rc.2 (Desktop)**) · Node ≥ 22.19.0
+> **v0.9.2** · MIT License · DSH ≥ 0.1.1-rc.2 (verified on 0.1.5-rc.1, 0.1.5-rc.2 and **0.2.0-rc.2 (Desktop)**) · Node ≥ 22.19.0
 >
 > ⚠️ Node note: this plugin uses `node:sqlite`. Verified on **Node 24.19**; on Node 22.x the module **may still require `--experimental-sqlite`** (no 22.x available here, so unverified). If startup reports `node:sqlite` unavailable, upgrade to 24.x or pass that flag.
 
@@ -267,6 +267,7 @@ Editable via `POST /biomemory/api/config` (host only, no UI); persisted as `biom
 
 | Version | Date | Highlights |
 | --- | --- | --- |
+| **v0.9.2** | 2026-09-29 | **Dead module `extract` removed (de-bloating)**: since v0.9.1 dropped the `POST /api/extract` endpoint, `extract.mjs` had **no production caller left** (only its own unit test), yet was still shipped in the npm tarball — the whole module is now gone, together with `tests/extract.test.mjs`, its `files` entry, four never-read `CFG.extract*` config keys and the extract special-case in `POST /config`. `package-lock.json` was pruned of jsdom/react/react-dom and their 68 transitive dev-only packages (72 -> 4). Tests 88 -> 81. |
 | **v0.9.1** | 2026-09-29 | **Admin UI removed (user decision)**: deleted `lib/client.js` and the "Memory Workbench" settings page (including its page test and the no-harness-client-imports guard); the plugin is now a **pure host plugin** used only through the `memory` tool and `/memory` command. The `dsh.client` declaration, the `./client` export, `lib` in `files`, and the jsdom/react devDependencies are gone. Dead UI copy keys and the `/extract`, `/archived`, `/entries/{unarchive,supersede,reactivate}`, `/superseded`, `/audit/aggregate` endpoints were removed too (HTTP endpoints 19 -> 12). 88/88 tests pass. |
 | **v0.9.0** | 2026-09-29 | **Embedding model and semantic retrieval removed (user decision)**: query collapses to a single deterministic relevance ranking; `embed.mjs`, the `@huggingface/transformers` dependency and the `preloadEmbeddings` config are gone (node_modules 410.5MB → 20.1MB, no ~90MB local ONNX model); the `db` vector API and `/vectors` endpoint were removed (`entries.vector` is kept for database compatibility); the settings page drops the mode selector and model card; `tokenize` and term-frequency cosine stay (used by `dream` clustering). **DSH 0.2.0-rc.2 adaptation**: the client half no longer requires any Harness Client package (official practices.md §UI rule 1) — Button/Input/9 icons are vendored inline; `dsh.client.inject` drops the non-existent `@deepseek-ai/dsh-client-runtime`; new `tests/no-harness-client-imports.test.mjs` guards. 95/95 tests pass |
 | **v0.8.2** | 2026-09-20 | **Config keys are now stored by type (found on a live install)**: the settings page's POST /config coerced every key through `Number()` except petEndpoint/approvalFallback, so the **string** keys extractProvider/extractModel were stored as 0 (`String(0) = "0"` was then used as a provider name → NO_ADAPTER, and the page rendered them blank because `0 || ""` is empty) and the **boolean** preloadEmbeddings became 0/1. Writing now distinguishes string / enum / boolean / numeric keys: strings are trimmed, enums fall back to an allow-list, booleans accept true/1/'1'/'true', numbers must be non-negative. Verified on the **running plugin** (POST → GET → on-disk config agree): extractProvider=deepseek-official, extractModel=deepseek-flash, preloadEmbeddings=true; the zero-token preview returned a 1616-character transcript of the current session |
@@ -304,7 +305,7 @@ Editable via `POST /biomemory/api/config` (host only, no UI); persisted as `biom
 ## Development
 
 ```bash
-# Run the test suite (node:test, 88 tests, all green)
+# Run the test suite (node:test, 81 tests, all green)
 npm test
 
 # Release consistency check (version / README version exposure / files whitelist / lock / git state)

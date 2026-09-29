@@ -4,7 +4,7 @@
 >
 > [简体中文](README.md) · [English](README.en.md)
 
-> **v0.9.1** · MIT License · DSH ≥ 0.1.1-rc.2（已在 0.1.5-rc.1 / 0.1.5-rc.2 / **0.2.0-rc.2（桌面版）** 实测）· Node ≥ 22.19.0
+> **v0.9.2** · MIT License · DSH ≥ 0.1.1-rc.2（已在 0.1.5-rc.1 / 0.1.5-rc.2 / **0.2.0-rc.2（桌面版）** 实测）· Node ≥ 22.19.0
 >
 > ⚠️ Node 版本提示：本插件用 `node:sqlite`。已在 **Node 24.19 实测通过**；Node 22.x 上该模块**可能仍需 `--experimental-sqlite`**（本机无 22.x，未能实测）。若启动报 `node:sqlite` 不可用，请升级到 24.x 或加上该 flag。
 
@@ -268,6 +268,7 @@ memory action=audit aggregate=true groupBy=action   # 聚合统计
 
 | 版本 | 日期 | 要点 |
 | --- | --- | --- |
+| **v0.9.2** | 2026-09-29 | **删死模块 extract（去臃肿）**：`extract.mjs`（按需抽取）自 v0.9.1 删除 `POST /api/extract` 端点后已**零生产调用方**，仅剩自己的单测引用，却仍被打进发布包——现整模块删除（含 `tests/extract.test.mjs`、`files` 白名单项、4 个读取数为 0 的 `CFG.extract*` 死配置键与 `POST /config` 的 extract 特判分支）；`package-lock.json` 清理掉已无来源的 jsdom/react/react-dom 及其 68 个传递依赖（72 → 4 个包）。测试 88 → 81。 |
 | **v0.9.1** | 2026-09-29 | **移除管理 UI（用户决策）**：删除 `lib/client.js` 与 DSH 设置页「记忆工作台」（含页面测试与 no-harness-client-imports 守卫），插件退化为**纯 host 能力**——只用 `memory` 工具与 `/memory` 命令；`dsh.client` 声明、`./client` 导出、`files` 里的 `lib` 与 jsdom/react devDependencies 一并移除。同时清掉随页面下线的死文案键，以及 `/extract`、`/archived`、`/entries/{unarchive,supersede,reactivate}`、`/superseded`、`/audit/aggregate` 端点（HTTP 端点 19→12）。测试 88/88。 |
 | **v0.9.0** | 2026-09-29 | **移除嵌入模型与语义检索（用户决策）**：query 收敛为单一确定性相关度检索（`score = relevance · (1 + 0.5·min(weight,weightCap)/weightCap)`，relevance = 命中字段权重 + 命中次数有界加成）；删除 `embed.mjs`、`@huggingface/transformers` 依赖与 `preloadEmbeddings` 配置（node_modules 410.5MB → 20.1MB，不再需要 ~90MB 本地 ONNX 模型与 onnxruntime）；`db` 的向量 API（setVector/setVectorsBatch/entriesWithVectors/vectorCount）与 `/vectors` 端点删除，`entries.vector` 列保留以兼容既有数据库；设置页移除模式分段按钮与模型状态卡；`tokenize`/词频余弦保留（`dream` 主题聚类仍用）。**适配 DSH 0.2.0-rc.2**：客户端半边不再 require 任何 Harness Client 包（官方 practices.md §UI 第 1 条）——Button/Input/9 个图标已本地化内联（0.2.0 起官方只导出 `...Regular/...Medium`，裸名与 `...16` 后缀名全部消失，直接解构会得到 undefined 组件并在渲染时清空槽位）；`dsh.client.inject` 删除 0.2.0 中不存在的 `@deepseek-ai/dsh-client-runtime`；新增 `tests/no-harness-client-imports.test.mjs` 守卫。95 测试全绿 |
 | **v0.8.2** | 2026-09-20 | **配置项按类型落库（真机踩坑）**：设置页写入接口 POST /config 此前除 petEndpoint/approvalFallback 外一律走 `Number()`，于是**字符串型**的 extractProvider/extractModel 被存成 0（随后 `String(0)="0"` 被当作提供方名 → NO_ADAPTER，设置页也因 `0 || ""` 显示为空白），**布尔型**的 preloadEmbeddings 变成 0/1。现按 字符串 / 枚举 / 布尔 / 数值 四类分别收口：字符串 trim、枚举白名单兜底、布尔兼容 true/1/'1'/'true'、数值做非负校验。修完在**运行中的插件**上实测（POST → GET 回读 → 磁盘配置三处一致）：extractProvider=deepseek-official、extractModel=deepseek-flash、preloadEmbeddings=true；零 token 预览取到 1616 字符的当前会话转写 |
@@ -312,7 +313,7 @@ memory action=audit aggregate=true groupBy=action   # 聚合统计
 ## 开发
 
 ```bash
-# 运行测试（node:test，88 个用例全绿）
+# 运行测试（node:test，81 个用例全绿）
 npm test
 
 # 发布一致性自检（版本号 / README 版本露出 / files 白名单 / lock / git 状态）

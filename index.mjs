@@ -524,9 +524,7 @@ export function apply(ctx, config = {}) {
               if (body[k] !== undefined) {
                 // v0.8.2（真机实测踩坑）：新增的**字符串/布尔**配置必须按类型落库。
                 // 旧代码除 approvalFallback 外一律 Number()，于是：
-                //   extractProvider/extractModel 被存成 0（之后 String(0)="0" 会被当成提供方名 → NO_ADAPTER）
                 if (k === 'approvalFallback') next[k] = body[k] === 'auto' ? 'auto' : 'deny'
-                else if (k === 'extractProvider' || k === 'extractModel') next[k] = typeof body[k] === 'string' ? body[k].trim() : ''
                 else if (k === 'nearDuplicateAction') next[k] = body[k] === 'skip' ? 'skip' : 'merge'
                 else {
                   const v = Number(body[k])

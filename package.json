@@ -1,7 +1,7 @@
 {
   "name": "dsh-biomemory",
-  "description": "cross-session memory for DeepSeek Harness v0.9.1：跨会话记忆（分层记录 · 分级审批 · 记忆代谢 · 结构化审计 · 纯本地 SQLite）。",
-  "version": "0.9.1",
+  "description": "cross-session memory for DeepSeek Harness v0.9.2：跨会话记忆（分层记录 · 分级审批 · 记忆代谢 · 结构化审计 · 纯本地 SQLite）。",
+  "version": "0.9.2",
   "type": "module",
   "main": "./index.mjs",
   "exports": {
@@ -44,7 +44,6 @@
     "snapshot.mjs",
     "gate.mjs",
     "mirror.mjs",
-    "extract.mjs",
     "session-state.mjs",
     "cordis.patch.yml",
     "README.md",
