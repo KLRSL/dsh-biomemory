@@ -4,7 +4,7 @@
 >
 > [简体中文](README.md) · [English](README.en.md)
 
-> **v0.9.0** · MIT License · DSH ≥ 0.1.1-rc.2（已在 0.1.5-rc.1 / 0.1.5-rc.2 / **0.2.0-rc.2（桌面版）** 实测）· Node ≥ 22.19.0
+> **v0.9.1** · MIT License · DSH ≥ 0.1.1-rc.2（已在 0.1.5-rc.1 / 0.1.5-rc.2 / **0.2.0-rc.2（桌面版）** 实测）· Node ≥ 22.19.0
 >
 > ⚠️ Node 版本提示：本插件用 `node:sqlite`。已在 **Node 24.19 实测通过**；Node 22.x 上该模块**可能仍需 `--experimental-sqlite`**（本机无 22.x，未能实测）。若启动报 `node:sqlite` 不可用，请升级到 24.x 或加上该 flag。
 
@@ -23,7 +23,7 @@
 | 来源可溯 | `source_ref` 记录来源，`add` 缺省记 `session:<id>`；结构化审计五元组（时间/操作者/事件/条目/详情）全程可查 |
 | 确定性检索 | 单一检索路径：命中字段权重（text 1.0 / summary 0.5 / entities 0.25）+ 命中次数有界加成 + weight 有界加成（≤50%）。v0.9.0 起移除嵌入模型与 semantic/hybrid 模式 |
 | 透明可改 | 每条记忆可编辑/删除/回滚（删除前自动备份）；SQLite 单文件即所有数据，`.db` 直接用标准工具查看 |
-| 零原生依赖 | `node:sqlite` 内置 + 纯 JS 实现，无原生模块冲突；管理 UI 五 tab「记忆工作台」，深色模式跟随 DSH 主题 |
+| 零原生依赖 | `node:sqlite` 内置 + 纯 JS 实现，无原生模块冲突；**纯 host 插件**（无 UI 半边），只用 `memory` 工具与 `/memory` 命令 |
 
 ## 安装
 
@@ -57,8 +57,9 @@ ls ~/.dsh/biomemory/
 #    迁移状态可通过 Web API 查看：
 #    GET /biomemory/api/status → migration 字段
 
-# 4. 管理 UI —— DSH 设置页出现「记忆工作台」五个 tab：
-#    概览 / 知识库 / 代谢 / 反思 / 设置
+# 4. 使用 —— 无需任何 UI：直接用 memory 工具或 /memory 命令
+#    memory action=query text="关键词"        # 查（自动召回也在后台生效）
+#    memory action=add track=agent text="…"   # 写（重要记忆会弹审批）
 ```
 
 ## 快速开始
@@ -173,17 +174,18 @@ memory_recall text="去年定下的版本规则"
 
 纯本地、无 LLM 的周期总结：**主题聚类**（TF 向量余弦相似度 ≥ 0.25）· **趋势统计**（近 7 天 vs 上一周写入量）· **冲突提醒**（行为与偏好潜在冲突清单）· **遗忘建议**（低权重候选）。报告写入 `longterm/reflections/<时间戳>.md`，支持 `--dry-run` 预览。
 
-### 知识库（管理 UI）
+### 知识库（通过命令与工具）
 
-DSH 设置页「记忆工作台」五个 tab：
+> v0.9.1 起**管理 UI 已移除**（用户决策）：不再有设置页 tab。检索与维护全部走 `memory` 工具 / `/memory` 命令。
 
-| tab | 功能 |
+| 能力 | 入口 |
 | --- | --- |
-| 概览 | 存储统计（条目/锁定/分层/审计近 7 天）、迁移状态、冲突与低权重速览 |
-| 知识库 | 关键词检索、按分层筛选、权重/引用/时间/锁定状态展示；一键锁定/解锁、**就地编辑**、**安全删除**（先备份可回滚）；冲突条目置顶 + 红色徽标 |
-| 代谢 | 一键执行 / 预览记忆代谢，展示衰减/巩固/冲突/归档结果 |
-| 反思 | 一键执行 / 预览深度反思，报告罗列与冲突就地裁决（编辑或删除） |
-| 设置 | 全部配置项可视化编辑（含恢复默认） |
+| 关键词检索（相关度 + 权重限幅） | `memory action=query text="…" [fragmentTypes=…] [minWeight=…]` |
+| 逐条查看 / 按层过滤 | `/memory list` |
+| 就地编辑 / 删除（先备份可回滚）/ 钉选 | `memory action=update\|remove\|pin\|unpin` |
+| 记忆代谢（衰减/巩固/归档，含 dry-run） | `memory action=dream [dryRun=true]` |
+| 深度反思（聚类/冲突/遗忘建议） | `memory action=reflect [dryRun=true]` |
+| 结构化审计 | `memory action=audit` |
 
 ### 审计
 
@@ -230,7 +232,7 @@ memory action=audit aggregate=true groupBy=action   # 聚合统计
 | `conflictOverlap` | `3` | 冲突检测：行为与单条偏好的专有双字重叠阈值 |
 | `petEndpoint` | `null` | 可选：本地桌宠通知服务 URL（默认关闭） |
 
-可在设置页「设置」tab 可视化修改，或通过 `POST /biomemory/api/config` 调整；持久化为 `biomemory.config.json`（透明可改）。
+可通过 `POST /biomemory/api/config` 调整（纯 host，无 UI）；持久化为 `biomemory.config.json`（透明可改）。
 
 ## 集成
 
@@ -271,6 +273,7 @@ memory action=audit aggregate=true groupBy=action   # 聚合统计
 
 | 版本 | 日期 | 要点 |
 | --- | --- | --- |
+| **v0.9.1** | 2026-09-29 | **移除管理 UI（用户决策）**：删除 `lib/client.js` 与 DSH 设置页「记忆工作台」（含页面测试与 no-harness-client-imports 守卫），插件退化为**纯 host 能力**——只用 `memory` 工具与 `/memory` 命令；`dsh.client` 声明、`./client` 导出、`files` 里的 `lib` 与 jsdom/react devDependencies 一并移除。同时清掉随页面下线的死文案键，以及 `/extract`、`/archived`、`/entries/{unarchive,supersede,reactivate}`、`/superseded`、`/audit/aggregate` 端点（HTTP 端点 19→12）。测试 88/88。 |
 | **v0.9.0** | 2026-09-29 | **移除嵌入模型与语义检索（用户决策）**：query 收敛为单一确定性相关度检索（`score = relevance · (1 + 0.5·min(weight,weightCap)/weightCap)`，relevance = 命中字段权重 + 命中次数有界加成）；删除 `embed.mjs`、`@huggingface/transformers` 依赖与 `preloadEmbeddings` 配置（node_modules 410.5MB → 20.1MB，不再需要 ~90MB 本地 ONNX 模型与 onnxruntime）；`db` 的向量 API（setVector/setVectorsBatch/entriesWithVectors/vectorCount）与 `/vectors` 端点删除，`entries.vector` 列保留以兼容既有数据库；设置页移除模式分段按钮与模型状态卡；`tokenize`/词频余弦保留（`dream` 主题聚类仍用）。**适配 DSH 0.2.0-rc.2**：客户端半边不再 require 任何 Harness Client 包（官方 practices.md §UI 第 1 条）——Button/Input/9 个图标已本地化内联（0.2.0 起官方只导出 `...Regular/...Medium`，裸名与 `...16` 后缀名全部消失，直接解构会得到 undefined 组件并在渲染时清空槽位）；`dsh.client.inject` 删除 0.2.0 中不存在的 `@deepseek-ai/dsh-client-runtime`；新增 `tests/no-harness-client-imports.test.mjs` 守卫。95 测试全绿 |
 | **v0.8.2** | 2026-09-20 | **配置项按类型落库（真机踩坑）**：设置页写入接口 POST /config 此前除 petEndpoint/approvalFallback 外一律走 `Number()`，于是**字符串型**的 extractProvider/extractModel 被存成 0（随后 `String(0)="0"` 被当作提供方名 → NO_ADAPTER，设置页也因 `0 || ""` 显示为空白），**布尔型**的 preloadEmbeddings 变成 0/1。现按 字符串 / 枚举 / 布尔 / 数值 四类分别收口：字符串 trim、枚举白名单兜底、布尔兼容 true/1/'1'/'true'、数值做非负校验。修完在**运行中的插件**上实测（POST → GET 回读 → 磁盘配置三处一致）：extractProvider=deepseek-official、extractModel=deepseek-flash、preloadEmbeddings=true；零 token 预览取到 1616 字符的当前会话转写 |
 | **v0.8.1** | 2026-09-20 | **冲突裁决闭环 + 按需抽取 + UI 说真话**：①`superseded` 从「永不写入的死值」变成真实语义——**人工作废**（被更新的结论取代），与 `archived` 分工是原因不同、效果相同（都退出注入与检索），`allEntries`/`entriesWithVectors` 只取 active；新增 `setEntryStatus` 统一「归档/作废/恢复」，审计 `SUPERSEDE`/`ARCHIVE-MANUAL`/`REACTIVATE`；新增 `GET /superseded` 与 UI 的「作废」「恢复」按钮（此前冲突只有红徽章、没有解决手段）。②**按需抽取按钮**：`POST /api/extract` 取 `ctx.sessions.get(id).deriveMessages()`，模型走 `ctx.llm.stream`（复用 DSH 现有提供方），候选经同一套指纹去重/近重复合并入库；「预览」零 token。③**UI 说真话**：模型卡改三态（待载入/512维/降级），审计卡注脚不再错配。④合规：客户端 bundle 迁入 `lib/client.js`、bundle 条目 id 统一为包名。98 测试全绿 |

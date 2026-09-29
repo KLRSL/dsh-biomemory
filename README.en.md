@@ -4,7 +4,7 @@
 >
 > [简体中文](README.md) · [English](README.en.md)
 
-> **v0.9.0** · MIT License · DSH ≥ 0.1.1-rc.2 (verified on 0.1.5-rc.1, 0.1.5-rc.2 and **0.2.0-rc.2 (Desktop)**) · Node ≥ 22.19.0
+> **v0.9.1** · MIT License · DSH ≥ 0.1.1-rc.2 (verified on 0.1.5-rc.1, 0.1.5-rc.2 and **0.2.0-rc.2 (Desktop)**) · Node ≥ 22.19.0
 >
 > ⚠️ Node note: this plugin uses `node:sqlite`. Verified on **Node 24.19**; on Node 22.x the module **may still require `--experimental-sqlite`** (no 22.x available here, so unverified). If startup reports `node:sqlite` unavailable, upgrade to 24.x or pass that flag.
 
@@ -23,7 +23,7 @@ A cross-session memory plugin for [DeepSeek Harness](https://github.com/deepseek
 | Source traceability | `source_ref` records provenance (`session:<id>` by default); structured audit log with a 5-tuple (time / actor / event / entry / detail) |
 | Deterministic retrieval | One path: field-weighted keyword relevance (text 1.0 / summary 0.5 / entities 0.25) + bounded occurrence bonus + bounded weight bonus (≤50%). v0.9.0 removed the embedding model and the semantic/hybrid modes |
 | Fully editable | Every entry can be edited, removed, or restored (database backed up before removal); a single `.db` file holds everything and can be inspected with standard tools |
-| Native-module free | `node:sqlite` built-in + pure JS — no native module conflicts; five-tab "Memory Workbench" admin UI follows the DSH theme including dark mode |
+| Native-module free | `node:sqlite` built-in + pure JS — no native module conflicts; **pure host plugin** (no UI half), used only through the `memory` tool and `/memory` command; five-tab "Memory Workbench" admin UI follows the DSH theme including dark mode |
 
 ## Installation
 
@@ -57,8 +57,9 @@ ls ~/.dsh/biomemory/
 #    Check migration status via the Web API:
 #    GET /biomemory/api/status → migration field
 
-# 4. Admin UI — the "Memory Workbench" appears in DSH settings with five tabs:
-#    Overview / Knowledge / Metabolism / Reflect / Settings
+# 4. Usage - no UI required: use the memory tool or the /memory command
+#    memory action=query text="keyword"       # read (auto-recall also runs in the background)
+#    memory action=add track=agent text="..."  # write (important entries ask for approval)
 ```
 
 ## Quick Start
@@ -173,17 +174,19 @@ The database is backed up automatically before a run (last 7 kept, `ROLLBACK` au
 
 Purely local, LLM-free periodic review: **topic clustering** (TF cosine similarity ≥ 0.25) · **trend stats** (last 7 days vs the previous week) · **conflict alerts** (potential behavior-vs-preference clashes) · **forget candidates** (low-weight entries). Reports go to `longterm/reflections/<timestamp>.md`; `--dry-run` previews without writing.
 
-### Knowledge base (admin UI)
+### Knowledge base (commands and tools)
 
-The "Memory Workbench" in DSH settings has five tabs:
+> Since v0.9.1 the **admin UI has been removed** (user decision): there is no settings tab any more.
+> Retrieval and maintenance now go through the `memory` tool / `/memory` command only.
 
-| Tab | Function |
+| Capability | Entry point |
 | --- | --- |
-| Overview | Store statistics (entries / pinned / layers / vectors / 7-day audit), model status, migration status, conflict and low-weight summaries |
-| Knowledge | Full-text / semantic search (exact / semantic / hybrid), layer filter, weight / hits / time / pin status; one-click pin/unpin, **inline editing**, **safe removal** (backed up first, restorable); conflict entries surfaced with a red badge |
-| Metabolism | One-click run / preview of metabolism with decay / consolidation / conflict / archive results |
-| Reflect | One-click run / preview of reflection; report listing with inline conflict resolution (edit or delete) |
-| Settings | Visual editing of every configuration option (including reset to defaults) |
+| Keyword retrieval (relevance + weight cap) | `memory action=query text="…" [fragmentTypes=…] [minWeight=…]` |
+| List / filter by layer | `/memory list` |
+| Edit in place / remove (backed up, restorable) / pin | `memory action=update\|remove\|pin\|unpin` |
+| Metabolism (decay / consolidate / archive, dry-run) | `memory action=dream [dryRun=true]` |
+| Deep reflection (clusters / conflicts / forget list) | `memory action=reflect [dryRun=true]` |
+| Structured audit | `memory action=audit` |
 
 ### Audit
 
@@ -229,7 +232,7 @@ Keyword-less queries (`list` browsing) sort by weight desc and float behavior me
 | `conflictOverlap` | `3` | Conflict detection: proprietary bigram overlap threshold between behavior and a single preference |
 | `petEndpoint` | `null` | Optional: local desktop-pet notification service URL (off by default) |
 
-Editable in the Settings tab, or via `POST /biomemory/api/config`; persisted as `biomemory.config.json` (fully transparent).
+Editable via `POST /biomemory/api/config` (host only, no UI); persisted as `biomemory.config.json` (fully transparent).
 
 ## Integration
 
@@ -270,6 +273,7 @@ After configuring `petEndpoint`, memory-save events are pushed to a local deskto
 
 | Version | Date | Highlights |
 | --- | --- | --- |
+| **v0.9.1** | 2026-09-29 | **Admin UI removed (user decision)**: deleted `lib/client.js` and the "Memory Workbench" settings page (including its page test and the no-harness-client-imports guard); the plugin is now a **pure host plugin** used only through the `memory` tool and `/memory` command. The `dsh.client` declaration, the `./client` export, `lib` in `files`, and the jsdom/react devDependencies are gone. Dead UI copy keys and the `/extract`, `/archived`, `/entries/{unarchive,supersede,reactivate}`, `/superseded`, `/audit/aggregate` endpoints were removed too (HTTP endpoints 19 -> 12). 88/88 tests pass. |
 | **v0.9.0** | 2026-09-29 | **Embedding model and semantic retrieval removed (user decision)**: query collapses to a single deterministic relevance ranking; `embed.mjs`, the `@huggingface/transformers` dependency and the `preloadEmbeddings` config are gone (node_modules 410.5MB → 20.1MB, no ~90MB local ONNX model); the `db` vector API and `/vectors` endpoint were removed (`entries.vector` is kept for database compatibility); the settings page drops the mode selector and model card; `tokenize` and term-frequency cosine stay (used by `dream` clustering). **DSH 0.2.0-rc.2 adaptation**: the client half no longer requires any Harness Client package (official practices.md §UI rule 1) — Button/Input/9 icons are vendored inline; `dsh.client.inject` drops the non-existent `@deepseek-ai/dsh-client-runtime`; new `tests/no-harness-client-imports.test.mjs` guards. 95/95 tests pass |
 | **v0.8.2** | 2026-09-20 | **Config keys are now stored by type (found on a live install)**: the settings page's POST /config coerced every key through `Number()` except petEndpoint/approvalFallback, so the **string** keys extractProvider/extractModel were stored as 0 (`String(0) = "0"` was then used as a provider name → NO_ADAPTER, and the page rendered them blank because `0 || ""` is empty) and the **boolean** preloadEmbeddings became 0/1. Writing now distinguishes string / enum / boolean / numeric keys: strings are trimmed, enums fall back to an allow-list, booleans accept true/1/'1'/'true', numbers must be non-negative. Verified on the **running plugin** (POST → GET → on-disk config agree): extractProvider=deepseek-official, extractModel=deepseek-flash, preloadEmbeddings=true; the zero-token preview returned a 1616-character transcript of the current session |
 | **v0.8.1** | 2026-09-20 | **Conflict-ruling loop + on-demand extraction + honest UI**: ①`superseded` stops being a never-written dead value and becomes **superseded by a human ruling** — same effect as `archived` (leaves injection and retrieval) but a different reason; `allEntries`/`entriesWithVectors` now only take `active`; new `setEntryStatus` unifies archive/supersede/reactivate with `SUPERSEDE`/`ARCHIVE-MANUAL`/`REACTIVATE` audits; new `GET /superseded` plus Supersede/Restore buttons in the UI (conflicts previously had a red badge and no way out). ②**On-demand extraction button**: `POST /api/extract` reads `ctx.sessions.get(id).deriveMessages()` and calls the model through `ctx.llm.stream` (reusing the DSH provider); candidates go through the same fingerprint dedup and near-duplicate merge, and Preview costs zero tokens. ③**Honest UI**: the model card has three states (not-loaded / 512-dim / degraded) and the audit card footnote no longer shows unrelated data. ④Compliance: client bundle moved to `lib/client.js`, bundle entry id unified to the package name. 98 tests green |
