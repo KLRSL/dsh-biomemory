@@ -32,14 +32,13 @@ import {
 import {
   parseEntryLine, formatEntryLine, readEntries, scanAllFiles,
   migrateMarkdownToDb, writeEntry, setPin,
-  consolidateHits, removeEntry, restoreEntry, unarchiveEntry, setEntryStatus, entryStatus, updateEntryText,
+  consolidateHits, removeEntry, restoreEntry, entryStatus, updateEntryText,
 } from './store.mjs'
 import { queryEntries, tokenize } from './retrieve.mjs'
 import { runDream, clusterEntries, latestReflection, runReflect, shouldRunAuto } from './meta.mjs'
 import { renderSnapshot, sessionSummarySectionText, handleSessionEvent } from './snapshot.mjs'
 import { gateWrite, selfHeal } from './gate.mjs'
 import { scheduleMirrorSync } from './mirror.mjs'
-import { runExtract } from './extract.mjs'
 import {
   markSummaryPending, clearSummaryPending, isSummaryPending,
   getLastTurnEnd, setLastTurnEnd,
@@ -48,7 +47,6 @@ import {
 export const inject = ['tools', 'systemPrompt']
 
 // v0.8.1：按需抽取持有的宿主服务上下文（在 ctx.inject(['sessions','llm']) 的回调里赋值）
-let extractCtx = null
 
 // ---------- 读取请求体（Web API 用） ----------
 // v0.8.0：加大小上限（默认 1 MiB，可用 DSH_BIOMEMORY_BODY_LIMIT 覆盖）——旧实现无限缓冲，
@@ -413,47 +411,6 @@ function registerMemoryCommand(ctx) {
 // 数据来源走官方契约：ctx.sessions.get(id).deriveMessages()（模型可见历史，不碰会话日志文件）；
 // 模型调用走官方 LLM 服务 ctx.llm.stream({provider, model, messages})（复用 DSH 现有提供方）。
 // 提取到的候选交给 store.writeEntry —— 与手工写入共用同一套指纹去重、近重复合并与审计。
-async function runExtractRequest({ svcCtx, sessionId, transcriptOnly, dryRun, maxChars, minConfidence }) {
-  if (!svcCtx || !svcCtx.sessions) throw new Error('抽取不可用：宿主未提供 sessions 服务')
-  const sessions = svcCtx.sessions
-  let session = sessionId && typeof sessions.get === 'function' ? sessions.get(sessionId) : null
-  if (!session && typeof sessions.list === 'function') {
-    const list = sessions.list() || []
-    session = list.length ? list[list.length - 1] : null
-  }
-  if (!session) throw new Error('找不到可抽取的会话（当前没有活动会话）')
-  const provider = String(CFG.extractProvider || '').trim()
-  const model = String(CFG.extractModel || '').trim()
-  const needModel = !transcriptOnly && !dryRun
-  if (needModel && (!provider || !model)) {
-    throw new Error('未配置抽取模型：请在设置页填写 extractProvider 与 extractModel（可先点「预览」看将要发送的内容，不花 token）')
-  }
-  const deps = {
-    getMessages: async () => (typeof session.deriveMessages === 'function' ? session.deriveMessages() : []),
-    callModel: async (system, user) => {
-      if (!svcCtx.llm || typeof svcCtx.llm.stream !== 'function') throw new Error('抽取不可用：宿主未提供 llm 服务')
-      const messages = [
-        { role: 'system', content: [{ type: 'text', text: system }] },
-        { role: 'user', content: [{ type: 'text', text: user }] },
-      ]
-      const out = []
-      for await (const chunk of svcCtx.llm.stream({ provider, model, messages })) {
-        if (!chunk) continue
-        // 契约：分片为 token 级增量，最后恰好一个 finish；失败以 error/aborted 终止
-        if (chunk.kind === 'error' || chunk.kind === 'aborted') {
-          throw new Error(`模型调用失败：${chunk.failure?.code || chunk.failure?.message || chunk.kind}`)
-        }
-        if (chunk.kind === 'text-delta' && typeof chunk.text === 'string') out.push(chunk.text)
-        if (chunk.kind === 'finish') break
-      }
-      return out.join('')
-    },
-    write: (args) => writeEntry({ ...args, sessionId: session.id }),
-    audit: (action, payload) => audit(action, payload),
-  }
-  const report = await runExtract(deps, { maxChars, minConfidence, dryRun, transcriptOnly })
-  return { ...report, sessionId: session.id, transcript: String(report.transcript || '').slice(0, 4000) }
-}
 
 // ---------- 插件挂载 ----------
 
@@ -475,7 +432,6 @@ export function apply(ctx, config = {}) {
   dbgLog('=== apply 执行 ===')
 
   // v0.8.1：按需抽取要用到的宿主服务——懒注入，服务缺失时接口返回明确错误而不是崩
-  ctx.inject(['sessions', 'llm'], (svcCtx) => { extractCtx = svcCtx })
 
   // 0. 启动自动代谢/反思（距上次执行 ≥ 配置天数时自动执行，0=关闭）
   //    v0.8.0 修复：判据一律取 meta 表时间戳（lastDreamAt / lastReflectAt）。
@@ -617,72 +573,6 @@ export function apply(ctx, config = {}) {
               .map((e) => ({ layer: e.layer, fp: e.fp, kind: e.kind, mode: e.mode, weight: e.weight, hits: e.hits, ts: e.created_at, pinned: e.pinned, text: e.text, fragment_type: e.fragment_type, status: entryStatus(e, prefsTextStr) }))
             all.sort((a, b) => (b.status === 'conflict') - (a.status === 'conflict') || (b.pinned - a.pinned) || (b.weight - a.weight) || String(b.ts || '').localeCompare(String(a.ts || '')))
             return send(200, { ok: true, entries: all.slice(0, limit) })
-          }
-          if (req.method === 'GET' && p === '/audit/aggregate') {
-            const sinceDays = Number(url.searchParams.get('sinceDays')) || undefined
-            const groupBy = url.searchParams.get('groupBy') || 'action'
-            const agg = auditAggregate({ sinceDays, groupBy })
-            return send(200, { ok: true, entries: agg })
-          }
-          // v0.8.1：归档条目单独开一个只读端点——归档条目在列表/检索里默认不可见（这是有意的），
-          // 但用户必须能看到它们并恢复，否则「归档」等于静默下架（fp:1fed41ef 的教训）。
-          if (req.method === 'GET' && p === '/archived') {
-            const limit = Math.min(500, Number(url.searchParams.get('limit')) || 200)
-            const conn = db.openDb()
-            const rows = conn.prepare(
-              `SELECT fp, fragment_type, kind, mode, weight, hits, pinned, created_at, text
-               FROM entries WHERE status = 'archived' ORDER BY created_at DESC LIMIT ?`
-            ).all(limit)
-            const prefsStr = prefsText()
-            return send(200, { ok: true, entries: rows.map((r) => ({ ...r, pinned: !!r.pinned, status: entryStatus(r, prefsStr) })) })
-          }
-          if (req.method === 'POST' && p === '/entries/unarchive') {
-            let body = {}
-            try { body = JSON.parse(await readBody(req)) } catch { /* ignore */ }
-            if (!body.fp) return send(400, { ok: false, error: 'fp 必填' })
-            const r = unarchiveEntry(body.fp, body.weight !== undefined ? { weight: Number(body.weight) } : {})
-            return r.ok ? send(200, { ok: true, fp: r.fp, weight: r.to }) : send(404, r)
-          }
-          if (req.method === 'POST' && p === '/extract') {
-            let body = {}
-            try { body = JSON.parse(await readBody(req)) } catch { /* ignore */ }
-            try {
-              const report = await runExtractRequest({
-                svcCtx: extractCtx,
-                sessionId: body.sessionId,
-                transcriptOnly: body.transcriptOnly === true,
-                dryRun: body.dryRun === true,
-                maxChars: Number(body.maxChars) || CFG.extractMaxChars,
-                minConfidence: Number.isFinite(Number(body.minConfidence)) ? Number(body.minConfidence) : CFG.extractMinConfidence,
-              })
-              return send(200, { ok: true, report })
-            } catch (err) {
-              return send(400, { ok: false, error: err instanceof Error ? err.message : String(err) })
-            }
-          }
-          // v0.8.1：冲突裁决闭环——「作废」把条目置为 superseded（退出注入/检索但保留可恢复）
-          if (req.method === 'POST' && p === '/entries/supersede') {
-            let body = {}
-            try { body = JSON.parse(await readBody(req)) } catch { /* ignore */ }
-            if (!body.fp) return send(400, { ok: false, error: 'fp 必填' })
-            const r = setEntryStatus(body.fp, 'superseded', { reason: body.reason })
-            return r.ok ? send(200, { ok: true, fp: r.fp, from: r.from, to: r.to }) : send(404, r)
-          }
-          if (req.method === 'POST' && p === '/entries/reactivate') {
-            let body = {}
-            try { body = JSON.parse(await readBody(req)) } catch { /* ignore */ }
-            if (!body.fp) return send(400, { ok: false, error: 'fp 必填' })
-            const r = setEntryStatus(body.fp, 'active')
-            return r.ok ? send(200, { ok: true, fp: r.fp, from: r.from, to: r.to }) : send(404, r)
-          }
-          if (req.method === 'GET' && p === '/superseded') {
-            const limit = Math.min(500, Number(url.searchParams.get('limit')) || 200)
-            const conn = db.openDb()
-            const rows = conn.prepare(
-              `SELECT fp, fragment_type, kind, mode, weight, hits, pinned, created_at, text
-               FROM entries WHERE status = 'superseded' ORDER BY created_at DESC LIMIT ?`
-            ).all(limit)
-            return send(200, { ok: true, entries: rows.map((r) => ({ ...r, pinned: !!r.pinned })) })
           }
           if (req.method === 'POST' && p === '/entries/pin') {
             let body = {}
