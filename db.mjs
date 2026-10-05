@@ -1,5 +1,5 @@
 // ============================================================================
-// dsh-biomemory · v0.5 SQLite 数据层（db.mjs）
+// dsh-memory-layer · v0.5 SQLite 数据层（db.mjs）
 //
 // 对应 v0.5 技术文档 §2.3/§2.4/§3.3/§4：
 //   - L2/L3 结构化存储：entries 表（entry_id/project/fragment_type/summary/
@@ -344,9 +344,9 @@ export function backupDb() {
   try {
     const row = db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get()
     ck = row ? { busy: Number(row.busy ?? 0), log: Number(row.log ?? 0), checkpointed: Number(row.checkpointed ?? 0) } : null
-    if (ck && ck.busy !== 0) console.warn(`[dsh-biomemory] wal_checkpoint busy=${ck.busy}：备份可能不含最新 WAL 内容`)
+    if (ck && ck.busy !== 0) console.warn(`[dsh-memory-layer] wal_checkpoint busy=${ck.busy}：备份可能不含最新 WAL 内容`)
   } catch (err) {
-    console.warn('[dsh-biomemory] wal_checkpoint 失败：', err instanceof Error ? err.message : String(err))
+    console.warn('[dsh-memory-layer] wal_checkpoint 失败：', err instanceof Error ? err.message : String(err))
   }
   const dir = backupDir()
   fs.mkdirSync(dir, { recursive: true })

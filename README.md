@@ -1,4 +1,4 @@
-# dsh-biomemory
+# dsh-memory-layer
 
 > **给 DeepSeek Harness 的记忆层**：本地单文件、零服务、零 API，靠**触发信号**把该想起的记忆在该想起的时候拿出来。
 
@@ -67,10 +67,10 @@
 
 ```bash
 # 需要已安装 git；--profile 换成你的 profile 名
-dsh plugin --profile web add github:KLRSL/dsh-biomemory
+dsh plugin --profile web add github:KLRSL/dsh-memory-layer
 
 # 本地开发（link）
-dsh plugin --profile web add link:./dsh-biomemory
+dsh plugin --profile web add link:./dsh-memory-layer
 ```
 
 装完重启 DSH（桌面版会热挂载）。

@@ -1,5 +1,5 @@
 // ============================================================================
-// dsh-biomemory · 审批门与自检（gate.mjs，v0.6 架构升级）
+// dsh-memory-layer · 审批门与自检（gate.mjs，v0.6 架构升级）
 //
 //   - gateWrite：分级审批门（重要 ask / 普通 auto；审批不可用按 approvalFallback 降级）
 //   - selfHeal：SQLite 完整性自检，损坏时从最近备份恢复

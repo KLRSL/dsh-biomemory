@@ -1,5 +1,5 @@
 {
-  "name": "dsh-biomemory",
+  "name": "dsh-memory-layer",
   "description": "cross-session memory for DeepSeek Harness v0.10.0：记忆层（触发式召回 · 类型优先级 · 五条清理规则 · 工作流链 · 纯本地单文件 SQLite）。",
   "version": "0.10.0",
   "type": "module",
@@ -53,7 +53,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/KLRSL/dsh-biomemory.git"
+    "url": "git+https://github.com/KLRSL/dsh-memory-layer.git"
   },
   "keywords": [
     "dsh",
@@ -64,9 +64,9 @@
     "sqlite",
     "local-first"
   ],
-  "homepage": "https://github.com/KLRSL/dsh-biomemory#readme",
+  "homepage": "https://github.com/KLRSL/dsh-memory-layer#readme",
   "bugs": {
-    "url": "https://github.com/KLRSL/dsh-biomemory/issues"
+    "url": "https://github.com/KLRSL/dsh-memory-layer/issues"
   },
   "dependencies": {}
 }

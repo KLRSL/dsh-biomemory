@@ -1,4 +1,4 @@
-# dsh-biomemory
+# dsh-memory-layer
 
 > **A memory layer for DeepSeek Harness**: one local file, zero services, zero API calls — recall driven by **trigger signals**, so the right memory shows up at the right moment.
 
@@ -67,10 +67,10 @@ A chain records **order, not causation** — it does not pretend to know why, on
 
 ```bash
 # git required; replace --profile with your profile name
-dsh plugin --profile web add github:KLRSL/dsh-biomemory
+dsh plugin --profile web add github:KLRSL/dsh-memory-layer
 
 # local development (link)
-dsh plugin --profile web add link:./dsh-biomemory
+dsh plugin --profile web add link:./dsh-memory-layer
 ```
 
 Restart DSH afterwards (the desktop app hot-mounts it).

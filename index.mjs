@@ -1,5 +1,5 @@
 // ============================================================================
-// dsh-biomemory v0.10.0 — 记忆层（DSH 宿主插件）：本地单文件 SQLite · 触发式召回 · 五条可解释清理规则 · 工作流链
+// dsh-memory-layer v0.10.0 — 记忆层（DSH 宿主插件）：本地单文件 SQLite · 触发式召回 · 五条可解释清理规则 · 工作流链
 //
 // v0.6 架构升级：index.mjs 为「接线层」——只保留插件装配（工具/命令/Web API/
 // apply），业务逻辑已拆分至：
@@ -517,7 +517,7 @@ export function apply(ctx, config = {}) {
           return send(500, { ok: false, error: String(err && err.message || err) })
         }
       },
-    }), 'dsh-biomemory: settings web API')
+    }), 'dsh-memory-layer: settings web API')
   })
 }
 

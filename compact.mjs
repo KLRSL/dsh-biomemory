@@ -1,5 +1,5 @@
 // ============================================================================
-// dsh-biomemory · 清理层（compact.mjs，v2）
+// dsh-memory-layer · 清理层（compact.mjs，v2）
 //
 // 五条可解释规则，唯一执行入口是 compact()；每次淘汰都写 <MEMORY_ROOT>/compact.log。
 //   1. 同 realm+type+key 覆盖 —— 写入时已把旧条目标墓碑（store.writeEntry），此处不重复

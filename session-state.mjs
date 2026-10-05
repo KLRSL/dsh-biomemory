@@ -1,5 +1,5 @@
 // ============================================================================
-// dsh-biomemory · 会话沉淀状态（session-state.mjs，v0.6）
+// dsh-memory-layer · 会话沉淀状态（session-state.mjs，v0.6）
 //
 // 会话结束自动沉淀的轻量状态：由 snapshot 模块写入（turn/end 时标记），
 // store 模块在 writeEntry 成功后清除（模型完成沉淀）。独立成最小模块，

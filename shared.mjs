@@ -1,5 +1,5 @@
 // ============================================================================
-// dsh-biomemory · 共享基础（shared.mjs）—— 配置 / 常量 / 基础工具 / 审计
+// dsh-memory-layer · 共享基础（shared.mjs）—— 配置 / 常量 / 基础工具 / 审计
 //
 // 从 index.mjs 拆出（v0.6 架构升级）：配置默认值与持久化、路径常量、
 // 纯工具函数（文件读写/时间/指纹/重要性判断/token 估算）、审计写入。
@@ -19,7 +19,7 @@ import * as db from './db.mjs'
 export const MEMORY_ROOT = process.env.DSH_MEMORY_ROOT || path.join(os.homedir(), '.dsh', 'memory')
 
 export const TOOL_NAME = 'memory'
-export const REQUEST_MARKER = '[dsh-biomemory]'
+export const REQUEST_MARKER = '[dsh-memory-layer]'
 
 // ---------- 配置（默认值，可在 apply(config) 覆盖） ----------
 
@@ -190,7 +190,7 @@ export function dbgLog(msg) {
   // 排查"插件没生效""召回没命中"这类问题时没有任何线索。现写 stderr
   // （不污染 stdout：宿主可能把 stdout 当协议通道）。
   try {
-    console.error(`[dsh-biomemory] ${msg}`)
+    console.error(`[dsh-memory-layer] ${msg}`)
   } catch { /* 忽略：日志失败绝不影响记忆本体 */ }
 }
 

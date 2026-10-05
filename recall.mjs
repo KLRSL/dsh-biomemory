@@ -1,5 +1,5 @@
 // ============================================================================
-// dsh-biomemory · 触发式召回（recall.mjs，v2）
+// dsh-memory-layer · 触发式召回（recall.mjs，v2）
 //
 // 输入当前会话的"信号"（项目路径 + 最近工具调用），输出该注入的内容：
 //   - 命中 trigger 的记忆：按类型优先级 workflow > error > decision > fact，同类型按 last_used
