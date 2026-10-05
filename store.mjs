@@ -111,17 +111,6 @@ export function scanAllFiles() {
 }
 
 // 重写文件（仅写回条目行，保留格式；逐行保留原始文件其余内容）
-export function rewriteFile(p, entries) {
-  const lines = readFile(p).split('\n')
-  const header = []
-  for (const line of lines) {
-    if (!parseEntryLine(line.trim()) && !line.trim().startsWith('- [')) header.push(line)
-  }
-  const body = entries.map((e) => formatEntryLine(e))
-  const text = header.join('\n').replace(/\n{3,}/g, '\n\n').trim() + (body.length ? '\n' + body.join('\n') : '') + '\n'
-  writeFile(p, text)
-}
-
 // ---------- v0.5：SQLite 初始化 + Markdown 迁移 ----------
 
 // 首次启动：把现有 Markdown（hot/projects/longterm/preferences）导入 SQLite。
@@ -300,7 +289,7 @@ export function consolidateHits(fpSet) {
   if (!fpSet || !fpSet.size) return 0
   db.openDb()
   for (const fp of fpSet) {
-    // v0.8.0：顺带记录召回时间（last_accessed）——dream 的巩固只认「最近仍被召回」的条目，
+    // 顺带记录召回时间（last_accessed）：清理规则里的「久未使用」判据就靠这一列，
     // 旧实现从不更新该列，导致久不使用的条目也一直涨权。
     db.touchEntry(fp, { hitsDelta: 1, accessed: true })
   }
@@ -319,8 +308,7 @@ export function removeEntry(fp) {
 
 // 取消归档（v0.8.0）：status 由 archived 改回 active，可顺带校准权重。
 // 与 restoreEntry 的分工：restoreEntry 用于「已被删除」的条目（要求主库查无此 fp，从数据库备份读回）；
-// 取消归档用于「行还在、只是 status=archived」的条目。背景：自动 dream 判据失效 + 复合衰减曾把
-// 19 条行为记忆误归档（fp:1fed41ef），需要一条可审计的恢复路径。
+// 取消归档用于「行还在、只是 status=archived」的条目；由工作区维护脚本 bm-restore-archived.cjs 调用。
 export function unarchiveEntry(fp, opts = {}) {
   db.openDb()
   const e = db.getByFp(fp)

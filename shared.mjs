@@ -185,8 +185,8 @@ export function dbgLog(msg) {
   if (!DBG) return
   // 2026-09-29 修复：此前 try 块是**空的** —— 函数体虽然存在，却什么都不输出，
   // 于是 DSH_MEMORY_DEBUG=1 形同虚设，且 dbgLog 的所有调用方一起静默失效：
-  //   mirror.mjs 镜像同步诊断、index.mjs 迁移/apply/auto-dream、gate.mjs 自愈失败……
-  // 排查"镜像没同步""自动代谢没跑"这类问题时没有任何线索。现写 stderr
+  //   index.mjs 迁移/apply、gate.mjs 自愈失败、recall.mjs 触发召回……
+  // 排查"插件没生效""召回没命中"这类问题时没有任何线索。现写 stderr
   // （不污染 stdout：宿主可能把 stdout 当协议通道）。
   try {
     console.error(`[dsh-biomemory] ${msg}`)
@@ -205,15 +205,6 @@ export function zhBigrams(s) {
 
 // 写入去重（v0.8.0）：中文 bigram Jaccard 相似度（0..1）——判断「即将写入的内容是否与已有条目高度重复」。
 // 纯函数、零依赖、不触发嵌入模型，可安全地放在写入路径上同步调用。
-export function bigramJaccard(a, b) {
-  const A = zhBigrams(String(a || ''))
-  const B = zhBigrams(String(b || ''))
-  if (!A.size || !B.size) return 0
-  let inter = 0
-  for (const g of A) if (B.has(g)) inter++
-  return inter / (A.size + B.size - inter)
-}
-
 // 写入去重实际使用的相似度：短文本上 Jaccard 偏严格（改几个字就掉到 0.6 以下），
 // 因此在「两条长度相近（短/长 ≥ 0.6）」时取 Jaccard 与包含度 inter/min(|A|,|B|) 的较大者。
 // 长度差太大时仍用 Jaccard，避免「短句被长条目完全包含」被误判成重复。
@@ -228,4 +219,3 @@ export function bigramSimilarity(a, b) {
   if (ratio < 0.6) return jaccard
   return Math.max(jaccard, inter / Math.min(A.size, B.size))
 }
-

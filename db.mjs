@@ -307,7 +307,7 @@ export function allEntries({ includeArchived = false } = {}) {
   const db = openDb()
   const sql = includeArchived
     ? 'SELECT * FROM entries ORDER BY created_at'
-    : "SELECT * FROM entries WHERE status = 'active' ORDER BY created_at" // v0.8.1：superseded（人工作废）与 archived 一样不参与注入/检索
+    : "SELECT * FROM entries WHERE status = 'active' ORDER BY created_at" // 只有 active 参与注入/检索（archived / deleted 都不参与）
   return db.prepare(sql).all().map(fromRow)
 }
 
