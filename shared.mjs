@@ -31,9 +31,6 @@ export const DEFAULTS = {
   hotTokenLimit: 5000,    // 快照注入热区 token 上限
   maxQueryResults: 20,    // 查询返回上限
   approvalFallback: 'deny', // v0.6.5 起默认 deny（fail-closed）：审批服务缺失/请求异常/非授予结果 → 拒绝写入并记审计；auto=自动保存并审计（旧行为，需显式设置）
-  autoDreamDays: 7,       // 启动时距上次代谢 ≥ 此天数 → 自动执行（0=关闭）
-  autoReflectDays: 3,     // 启动时距上次反思 ≥ 此天数 → 自动执行（0=关闭）
-  conflictOverlap: 3,     // 冲突仲裁：行为与单条偏好的专有双字重叠阈值（P0-003 二次验证）
   nearDuplicateThreshold: 0.7, // v0.8.0：写入去重——与已有同类条目的中文 bigram Jaccard ≥ 此值时不再新增（0=关闭；
                                // 实测「换了说法的同一件事」约 0.7~0.8，完全改写才会低于 0.6）
   nearDuplicateAction: 'merge', // v0.8.0：命中近重复怎么办——merge=合并进已有条目（追加「补充·日期」并提权，借鉴 @zheexinn/dsh-memory）/ skip=只提示不写
@@ -43,7 +40,6 @@ export const DEFAULTS = {
 }
 
 // 冲突阈值从配置读取（模块加载时为默认，apply 时更新）
-export let CONFLICT_OVERLAP_THRESHOLD = 3
 
 export let CFG = { ...DEFAULTS }
 
@@ -53,9 +49,6 @@ export function setConfig(next) {
 }
 export function getConfig() {
   return { ...CFG }
-}
-export function setConflictThreshold(n) {
-  CONFLICT_OVERLAP_THRESHOLD = Number(n) || 3
 }
 
 // ---------- 数据层：Markdown 文件读写（透明、可读改） ----------
@@ -94,11 +87,6 @@ export function loadConfig() {
           break
         case 'nearDuplicateAction':
           merged[k] = v === 'skip' ? 'skip' : 'merge'
-          break
-        case 'autoDreamDays':
-        case 'autoReflectDays':
-          // 0=关闭，必须能读回 0（旧实现 n>0 才赋值会把 0 丢掉）
-          if (Number.isFinite(Number(v)) && Number(v) >= 0) merged[k] = Number(v)
           break
         default:
           // 其余为数值项：只接受有限正数（保持原语义）
@@ -193,33 +181,6 @@ export function estimateTokens(s) {
   return zh + Math.ceil(other / 4)
 }
 
-// ---------- 审计（v0.5：SQLite audit_log 表；兼容旧 JSONL 日志） ----------
-
-export function audit(event, data = {}) {
-  db.openDb()
-  const entryId = data.entry_id
-  const detail = { ...data }
-  delete detail.entry_id
-  db.audit(event, { entry_id: entryId, detail })
-  // 旧版可读日志同步（一行摘要）
-  const stamp = nowStamp()
-  const brief = data.text ? data.text.slice(0, 60) : ''
-  appendFile(PATHS.audit, `[${stamp}] ${event} ${data.fp || ''} ${brief}\n`)
-  return { t: isoNow(), event, ...data }
-}
-
-export function queryAudit({ sinceDays, type, entryId, actor, limit = 50 } = {}) {
-  return db.queryAudit({ sinceDays, type, entryId, actor, limit })
-}
-
-// 审计聚合统计（文档 P1-003）：groupBy = action | day | entry
-export function auditAggregate({ sinceDays, groupBy = 'action' } = {}) {
-  return db.auditAggregate({ sinceDays, groupBy })
-}
-
-// ---------- 调试日志 ----------
-
-const DBG = process.env.DSH_MEMORY_DEBUG === '1'
 export function dbgLog(msg) {
   if (!DBG) return
   // 2026-09-29 修复：此前 try 块是**空的** —— 函数体虽然存在，却什么都不输出，
@@ -232,7 +193,7 @@ export function dbgLog(msg) {
   } catch { /* 忽略：日志失败绝不影响记忆本体 */ }
 }
 
-// ---------- 冲突仲裁（v0.5 P0-003 二次验证） ----------
+// ---------- 中文 bigram（去重 / 相似度共用） ----------
 
 // 中文双字 bigram 集合（主题相似度/冲突检测共用）
 export function zhBigrams(s) {
@@ -241,15 +202,6 @@ export function zhBigrams(s) {
   for (let i = 0; i < chars.length - 1; i++) out.add(chars.slice(i, i + 2))
   return out
 }
-
-// 教训/遵守语境排除 + 泛化词过滤（与 index.mjs 原实现一致，搬移到此）
-const CONFLICT_LEARN_HINTS = /教训|踩坑|事故复盘|切记|务必|禁止|不要|严禁|不得|一律|必须|先查|先确认|经验总结|复盘|注意点|注意事项|踩过的坑|以后注意|以后都|误删|误操作/
-const CONFLICT_GENERIC_BIGRAMS = new Set([
-  '网络', '下载', '镜像', '用户', '数据', '文件', '程序', '插件', '安装', '删除', '清理',
-  '更新', '版本', '使用', '进行', '一个', '这个', '可以', '需要', '直接', '本地', '系统',
-  '项目', '工具', '命令', '配置', '设置', '默认', '完全', '不要', '没有', '不是', '已经',
-  '之后', '之前', '时候', '服务', '加速', '速服', '告知', '访问', '打开',
-])
 
 // 写入去重（v0.8.0）：中文 bigram Jaccard 相似度（0..1）——判断「即将写入的内容是否与已有条目高度重复」。
 // 纯函数、零依赖、不触发嵌入模型，可安全地放在写入路径上同步调用。
@@ -277,17 +229,3 @@ export function bigramSimilarity(a, b) {
   return Math.max(jaccard, inter / Math.min(A.size, B.size))
 }
 
-export function detectConflict(entry, prefsText) {
-  if (CONFLICT_LEARN_HINTS.test(entry.text)) return false
-  const prefLines = String(prefsText || '').split('\n').map((l) => l.trim()).filter((l) => l.length > 4)
-  if (!prefLines.length) return false
-  const eb = zhBigrams(entry.text)
-  let maxOverlap = 0
-  for (const line of prefLines) {
-    const pb = zhBigrams(line)
-    let ov = 0
-    for (const b of eb) if (pb.has(b) && !CONFLICT_GENERIC_BIGRAMS.has(b)) ov++
-    if (ov > maxOverlap) maxOverlap = ov
-  }
-  return maxOverlap >= CONFLICT_OVERLAP_THRESHOLD
-}

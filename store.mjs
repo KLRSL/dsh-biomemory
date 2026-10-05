@@ -17,20 +17,10 @@ import path from 'node:path'
 import * as db from './db.mjs'
 import {
   MEMORY_ROOT, PATHS, readFile, writeFile, appendFile, nowStamp, isoNow, tsToIso, fingerprint,
-  isImportant, detectConflict, bigramSimilarity, CFG, ensureDirs, audit as sharedAudit, dbgLog,
+  isImportant, bigramSimilarity, CFG, ensureDirs, dbgLog,
 } from './shared.mjs'
 import { clearSummaryPending } from './session-state.mjs'
-
-// ---------- 审计出入口（v0.6.7 修复：本模块必须走 shared.audit，不能直接 db.audit） ----------
-// 背景（2026-09-17 实查）：审计是「双写」——db.audit 只写 SQLite 的 audit_log 表，
-// 而人类可读镜像 <MEMORY_ROOT>/audit.log 的追加逻辑在 shared.mjs::audit 里。
-// 本模块原先 8 处直接调 db.audit → 经 memory 工具写入/编辑/删除/钉选的记忆
-// 全都不进镜像（实查镜像里 WRITE 行止于 2026-08-19，只剩代谢类事件），
-// 与文档「SQLite audit_log 表 + 人类可读镜像」的说法不符。
-// 统一走下面的 audit()，杜绝再次分叉。
-function audit(event, data = {}) {
-  return sharedAudit(event, data)
-}
+import { inferType, makeKey, triggersFromText } from './trigger.mjs'
 
 // ---------- 条目解析（兼容新旧格式） ----------
 
@@ -166,7 +156,6 @@ export function migrateMarkdownToDb() {
       } catch { /* ignore */ }
     }
   }
-  audit('MIGRATE', { from: 'markdown', to: 'sqlite', detail: { imported } })
   db.metaSet('migrated_at', db.isoNow())
   db.metaSet('schema_version', '1')
   return { migrated: true, imported }
@@ -190,7 +179,7 @@ export function inferMemoryClass({ track, text }) {
   return 'model_inference'
 }
 
-export function writeEntry({ track, text, sessionId, approved, mode, source }) {
+export function writeEntry({ track, text, sessionId, approved, mode, source, realm, triggers }) {
   db.openDb()
   const fp = fingerprint(text)
   const dup = db.getByFp(fp)
@@ -200,14 +189,32 @@ export function writeEntry({ track, text, sessionId, approved, mode, source }) {
   const modeLabel = mode === 'fallback' ? '降级' : (mode === 'ask' ? '审批' : (mode === 'auto' ? '自动' : (approved ? '审批' : '自动')))
   const layer = track === 'user' ? 'longterm' : 'longterm'
   const fragmentType = track === 'user' ? (isImportant(text, track) ? 'preference' : 'fact') : 'lesson'
+  // ---- v2：realm / type / trigger / key（触发式召回的最小三元组） ----
+  const realmKey = realm || 'user'
+  const mtype = inferType({ text, track })
+  const trgList = (Array.isArray(triggers) && triggers.length ? triggers : triggersFromText(text)).filter(Boolean)
+  const trigger = trgList[0] || null
+  const mkey = makeKey(text)
+  // 同键覆盖：同 realm+type+key 的旧条目标墓碑（不物理删）——「同一件事只留最新一条」
+  let sameKey = false
+  if (mkey) {
+    for (const e of db.allEntries()) {
+      const keyHit = e.mkey && (e.mkey === mkey || e.mkey.startsWith(mkey) || mkey.startsWith(e.mkey))
+      if (e.fp !== fp && keyHit && (e.realm || 'user') === realmKey && (e.mtype || 'fact') === mtype) {
+        db.setStatus(e.fp, 'deleted')
+        sameKey = true
+      }
+    }
+  }
   // v0.8.0 写入去重升级（记忆原子化）：与已有**同类**条目高度相似时不再新增，改为提示合并。
   // 碎片化的根因就是「同一件事被反复写成新条目」（8/20~9/5 那批只能靠人工合并，且漏合并的会被
   // 正常代谢归档）。用纯 bigram Jaccard，不触发嵌入模型；阈值可由 nearDuplicateThreshold 调整（0=关闭）。
   const nearThr = Number(CFG.nearDuplicateThreshold)
-  if (Number.isFinite(nearThr) && nearThr > 0) {
+  // 带 trigger 的写入不合并（每次出现都是该 trigger 的上一步，供链使用）；同键已覆盖时也不再合并
+  if (!sameKey && !trigger && Number.isFinite(nearThr) && nearThr > 0) {
     let best = null
     for (const e of db.allEntries()) {
-      if (e.fragment_type !== fragmentType) continue
+      if (e.fragment_type !== fragmentType || (e.realm || 'user') !== realmKey) continue
       const score = bigramSimilarity(text, e.text)
       if (!best || score > best.score) best = { fp: e.fp, score, text: String(e.text || ''), weight: e.weight, entry_id: e.entry_id }
     }
@@ -220,11 +227,9 @@ export function writeEntry({ track, text, sessionId, approved, mode, source }) {
         if (merged.length <= 4000) { // 合并后过长的（>4000 字）退回 skip，避免单条无限膨胀
           const weight = Math.min(Number(CFG.weightCap) || 20, Number(best.weight || 0) + 1)
           db.upsertEntry({ fp: best.fp, text: merged, weight })
-          audit('WRITE-MERGE', { fp: best.fp, text: text.trim(), entry_id: best.entry_id, detail: { score, fromLen: best.text.length, toLen: merged.length, weight } })
           return { ok: true, merged: true, reason: 'near-duplicate-merged', fp: best.fp, similar: { fp: best.fp, score, text: best.text.slice(0, 200) } }
         }
       }
-      audit('WRITE-SKIP', { fp: best.fp, text: text.trim(), detail: { reason: 'near-duplicate', score, track } })
       return { ok: true, skipped: true, reason: 'near-duplicate', similar: { fp: best.fp, score, text: best.text.slice(0, 200) } }
     }
   }
@@ -242,13 +247,35 @@ export function writeEntry({ track, text, sessionId, approved, mode, source }) {
     pinned: false,
     source_ref: sourceRef,
     memory_class: memoryClass,
+    realm: realmKey,
+    mtype,
+    trigger,
+    mkey,
   })
-  audit('WRITE', { fp, text: text.trim(), entry_id: entryId, detail: { track, approved: modeLabel, fallback: mode === 'fallback' ? true : undefined, memory_class: memoryClass, source_ref: sourceRef } })
+  // v2 适配层：同一 trigger 出现 >3 次（按 trigger_counts 计）→ 升级 workflow + 生成链
+  let chain = null
+  if (trigger) {
+    const n = db.bumpTrigger(trigger, realmKey)
+    if (n > 3) chain = promoteIfRepeated(trigger, realmKey)
+  }
   // v0.6.1 单轨制：不再 append 到 preferences.md——SQLite 是唯一运行时数据源，
   // Markdown 仅保留为只读备份（曾因双轨导致 Markdown 新条目永不注入，见 2026-09-06 整理）
   // v0.6 会话沉淀：模型调 memory add 写入成功 → 视为"已沉淀"，清除待沉淀标记
   clearSummaryPending()
-  return { ok: true, fp }
+  return { ok: true, fp, mtype, trigger, chain } 
+}
+
+/** v2 适配层：同 trigger 的活跃条目 >3 条时，升级为 workflow 并生成「当 X 时：先 A，再 B」的链 */
+export function promoteIfRepeated(trigger, realmKey) {
+  if (!trigger) return null
+  if (db.countByTrigger(trigger) <= 3) return null
+  const rows = db.byTrigger([trigger], { realm: realmKey })
+  for (const e of rows) if (e.mtype !== 'workflow') db.upsertEntry({ fp: e.fp, mtype: 'workflow' })
+  const steps = rows
+    .slice()
+    .sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')))
+    .map((e) => e.text)
+  return db.chainUpsert({ trigger, realm: realmKey, steps })
 }
 
 // ---------- 记忆钉（锁定不参与衰减） ----------
@@ -259,7 +286,6 @@ export function setPin(fp, pinned) {
   if (!e) return { ok: false, error: `未找到 [fp:${fp}]` }
   const ok = db.setPinFp(fp, pinned, pinned ? 'memory pin' : undefined)
   if (!ok) return { ok: false, error: `未找到 [fp:${fp}]` }
-  audit(pinned ? 'PIN' : 'UNPIN', { fp, text: e.text, entry_id: e.entry_id })
   return { ok: true, fp, pinned, text: e.text }
 }
 
@@ -288,7 +314,6 @@ export function removeEntry(fp) {
   if (!e) return { ok: false, error: `未找到 [fp:${fp}]` }
   const bk = db.backupDb()
   db.removeByFp(fp)
-  audit('REMOVE', { fp, text: e.text, entry_id: e.entry_id, detail: { backup: bk } })
   return { ok: true, fp, layer: e.layer, text: e.text, backup: bk }
 }
 
@@ -304,16 +329,13 @@ export function unarchiveEntry(fp, opts = {}) {
   const want = Number(opts.weight)
   const weight = Number.isFinite(want) && want > 0 ? want : e.weight
   db.upsertEntry({ fp, status: 'active', weight })
-  audit('UNARCHIVE', { fp, text: e.text, entry_id: e.entry_id, detail: { from: e.weight, to: weight } })
   return { ok: true, fp, layer: e.layer, kind: e.kind, from: e.weight, to: weight, text: e.text }
 }
 
-// 状态切换（v0.8.1）：把「归档 / 作废 / 恢复」收敛到一条路径，并让 superseded 这个死值有了语义——
-//   archived   = 因权重衰减被动下架（冷归档）
-//   superseded = 因人工裁决被更新的结论取代（冲突裁决闭环）
-// 二者都不再进入快照注入与检索（db.allEntries 只取 active），区别只在"为什么下架"。
+// 状态切换（v0.8.1）：归档 / 恢复收敛到一条路径；archived = 因权重衰减被动下架（冷归档），
+// 不再进入快照注入与检索（db.allEntries 只取 active）。
 export function setEntryStatus(fp, status, opts = {}) {
-  if (!['active', 'archived', 'superseded'].includes(status)) return { ok: false, error: `非法状态 ${status}` }
+  if (!['active', 'archived'].includes(status)) return { ok: false, error: `非法状态 ${status}` }
   db.openDb()
   const e = db.getByFp(fp)
   if (!e) return { ok: false, error: `未找到 [fp:${fp}]` }
@@ -321,8 +343,6 @@ export function setEntryStatus(fp, status, opts = {}) {
   const w = Number(opts.weight)
   const weight = Number.isFinite(w) && w > 0 ? w : e.weight
   db.upsertEntry({ fp, status, weight })
-  const action = status === 'superseded' ? 'SUPERSEDE' : status === 'archived' ? 'ARCHIVE-MANUAL' : 'REACTIVATE'
-  audit(action, { fp, text: e.text, entry_id: e.entry_id, detail: { from: e.status, to: status, reason: opts.reason || null } })
   return { ok: true, fp, from: e.status, to: status, layer: e.layer, kind: e.kind, text: e.text }
 }
 
@@ -338,15 +358,13 @@ export function restoreEntry(fp) {
     // v0.8.0：保留原 entry_id——旧实现丢弃它，upsertEntry 会重新生成 UUID，
     // 于是历史审计行（按 entry_id 关联）全部指向不存在的条目（实测 6893/10006 行悬空）。
     db.upsertEntry({ ...e, entry_id: e.entry_id, status: e.status || 'active', vector: null })
-    audit('RESTORE', { fp, text: e.text, entry_id: e.entry_id, detail: { from: name } })
     return { ok: true, fp, layer: e.layer, text: e.text, backup: name }
   }
   return { ok: false, error: `备份库中未找到 [fp:${fp}]（备份保留最近 ${db.MAX_BACKUPS || 7} 次）` }
 }
 
-// 条目状态（知识页状态色）：conflict=与偏好冲突（红）/ warning=低权重待处理（黄）/ ok=正常（绿）
-export function entryStatus(e, prefsText) {
-  if (e.kind === '行为' && detectConflict(e, prefsText)) return 'conflict'
+// 条目状态（知识页状态色）：warning=低权重待处理（黄）/ ok=正常（绿）
+export function entryStatus(e) {
   if (e.status !== 'archived' && Number(e.weight) < CFG.decayThreshold) return 'warning'
   return 'ok'
 }
@@ -366,6 +384,5 @@ export function updateEntryText(fp, text) {
   }
   const from = e.text
   db.upsertEntry({ fp, text: trimmed, vector: null })
-  audit('UPDATE', { fp, text: trimmed, entry_id: e.entry_id, detail: { from: from.slice(0, 80), to: trimmed.slice(0, 80) } })
   return { ok: true, fp, text: trimmed }
 }

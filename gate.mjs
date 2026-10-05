@@ -7,7 +7,7 @@
 // ============================================================================
 
 import * as db from './db.mjs'
-import { CFG, isImportant, TOOL_NAME, REQUEST_MARKER, dbgLog, audit } from './shared.mjs'
+import { CFG, isImportant, TOOL_NAME, REQUEST_MARKER, dbgLog } from './shared.mjs'
 
 // ---------- 审批门（分级：重要 ask / 普通 auto；审批不可用按 approvalFallback 降级） ----------
 
@@ -20,7 +20,6 @@ export function isApprovalGranted(outcome) {
   if (v === 'rejected' || v === 'cancelled' || v === 'canceled' || v === 'unavailable' || v === 'deny' || v === 'denied') return false
   // 不认识的词：不是本运行时契约的授予值 → fail-closed（记审计便于排查版本差异）
   if (v) {
-    try { audit('APPROVAL-UNKNOWN', { detail: { outcome: String(outcome), tool: TOOL_NAME } }) } catch { /* 审计失败不影响拒绝 */ }
   }
   return false
 }
@@ -32,7 +31,6 @@ export async function gateWrite(ctx, { track, text, agent, callId, signal }) {
   }
   const failClosed = CFG.approvalFallback !== 'auto' // 默认 'deny'：审批缺失/异常 → 拒绝（fail-closed）
   const fallback = (why, outcome) => {
-    try { audit('APPROVAL-UNAVAILABLE', { detail: { why, outcome: outcome ?? null, fallback: failClosed ? 'deny' : 'auto', track } }) } catch { /* 审计失败不改变策略 */ }
     return failClosed
       ? { approved: false, mode: 'ask', outcome: outcome ?? 'unavailable' }
       : { approved: true, mode: 'fallback', outcome: outcome ?? 'unavailable' }
@@ -76,8 +74,7 @@ export function selfHeal() {
     const bk = db.listBackups()
     if (bk.length) {
       const restored = db.restoreLatestBackup()
-      db.audit('ROLLBACK', { detail: { from: restored } })
-      dbgLog(`self-heal: restored from ${restored}`)
+          dbgLog(`self-heal: restored from ${restored}`)
     }
   }
 }

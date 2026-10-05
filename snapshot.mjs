@@ -8,7 +8,7 @@
 
 import * as db from './db.mjs'
 import {
-  PATHS, estimateTokens, detectConflict, CFG, prefsText,
+  PATHS, estimateTokens, CFG, prefsText,
 } from './shared.mjs'
 import {
   isSummaryPending, getLastTurnEnd, setLastTurnEnd, markSummaryPending, clearSummaryPending,
@@ -122,13 +122,8 @@ export function renderSnapshot() {
     rest.push(trimTextToTokens('## 近期知识记忆\n' + kbSorted.map(fmt).join('\n'), kbBudget, '## 近期知识记忆'))
   }
   if (bb.length) {
-    // 与偏好冲突的行为记忆置顶并标注（冲突浮出，会话内即可发现）
-    const bbSorted = [...bb].sort((a, b) => {
-      const ca = a.kind === '行为' && detectConflict(a, prefsTextStr) ? 1 : 0
-      const cb = b.kind === '行为' && detectConflict(b, prefsTextStr) ? 1 : 0
-      return (cb - ca) || rank(a, b)
-    })
-    rest.push(trimTextToTokens('## 近期行为记忆\n' + bbSorted.map((e) => `- [${e.layer}]${e.memory_class ? `[${e.memory_class}]` : ''}${e.kind === '行为' && detectConflict(e, prefsTextStr) ? ' [冲突]' : ''} ${e.text}`).join('\n'), kbBudget, '## 近期行为记忆'))
+    const bbSorted = [...bb].sort((a, b) => rank(a, b))
+    rest.push(trimTextToTokens('## 近期行为记忆\n' + bbSorted.map((e) => `- [${e.layer}]${e.memory_class ? `[${e.memory_class}]` : ''} ${e.text}`).join('\n'), kbBudget, '## 近期行为记忆'))
   }
   const keep = [...head, ...rest].filter((p) => p !== '')
   if (!keep.length) return ''

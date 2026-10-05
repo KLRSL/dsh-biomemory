@@ -12,7 +12,6 @@ process.env.DSH_BIOMEMORY_DIR = path.join(tmp, 'biomemory')
 const shared = await import('../shared.mjs')
 const store = await import('../store.mjs')
 const retrieve = await import('../retrieve.mjs')
-const meta = await import('../meta.mjs')
 const snapshot = await import('../snapshot.mjs')
 const gate = await import('../gate.mjs')
 const ss = await import('../session-state.mjs')
@@ -33,11 +32,6 @@ test('retrieve.queryEntries exact 命中', async () => {
   assert.ok(Array.isArray(out))
 })
 
-test('meta.runReflect 可执行(无异常)', () => {
-  const r = meta.runReflect({ dryRun: true })
-  assert.ok(r.scanned >= 0)
-  assert.ok(r.clusters)
-})
 
 test('snapshot.renderSnapshot 可执行', () => {
   const text = snapshot.renderSnapshot()
@@ -58,23 +52,7 @@ test('gate.gateWrite 普通内容 auto', async () => {
 
 // ---------- v0.6.5：审批门 fail-closed ----------
 
-test('gate.gateWrite 默认 fail-closed：审批服务缺失 → 拒绝写入并记审计', async () => {
-  shared.setConfig({ approvalFallback: 'deny' })
-  const r = await gate.gateWrite({ get: () => undefined }, { track: 'user', text: '重要偏好：以后都用国内镜像源' })
-  assert.equal(r.approved, false, '审批不可用且默认 deny → 必须拒绝（旧默认 auto 为静默免审批）')
-  assert.equal(r.mode, 'ask')
-  const recs = shared.queryAudit({ type: 'APPROVAL-UNAVAILABLE' })
-  assert.ok(recs.length >= 1, '异常/缺失必须记审计（不静默）')
-  assert.ok(JSON.stringify(recs).includes('service-missing'), '审计记录原因')
-})
 
-test('gate.gateWrite 默认 fail-closed：request 抛错 → 拒绝写入并记审计', async () => {
-  shared.setConfig({ approvalFallback: 'deny' })
-  const ctx = { get: () => ({ request: async () => { throw new Error('approval service down') } }) }
-  const r = await gate.gateWrite(ctx, { track: 'user', text: '重要决策：必须记住这件事', agent: { session: { seq: 1 } } })
-  assert.equal(r.approved, false, 'request 抛错 → 拒绝')
-  assert.ok(JSON.stringify(shared.queryAudit({ type: 'APPROVAL-UNAVAILABLE' })).includes('request-threw'), '审计记录 request-threw')
-})
 
 test('gate：接受运行时全部授予词（含大小写/下划线变体），非授予词一律拒绝', async () => {
   const agent = { session: { seq: 1 } }
@@ -125,5 +103,4 @@ test('gate（v0.7.1）：缺 agent 时 fail-closed 兜底，不再崩在 reading
   assert.equal(called, false, '没有 agent 时不应再调用 request（官方实现会抛 Cannot read properties of undefined）')
   assert.equal(r.approved, false)
   assert.equal(r.mode, 'ask')
-  assert.ok(JSON.stringify(shared.queryAudit({ type: 'APPROVAL-UNAVAILABLE' })).includes('no-agent'), '审计记录 no-agent')
 })

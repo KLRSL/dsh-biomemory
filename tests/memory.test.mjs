@@ -35,7 +35,6 @@ import { beforeEach } from 'node:test'
 beforeEach(() => {
   const db = openDb()
   db.exec('DELETE FROM entries')
-  db.exec('DELETE FROM audit_log')
   db.exec('DELETE FROM meta')
 })
 
@@ -206,11 +205,7 @@ test('setPin：pin 后条目 pinned=true，unpin 恢复', async () => {
   assert.equal(r1.pinned, true)
   assert.equal(db.getByFp('e5e5e5').pinned, true, 'SQLite 中 pinned=true')
   // v0.8.0：钉住不再把权重清零（旧实现 weight=1 → 一解锁就低于 decayThreshold 被归档）。
-  // 「不参与衰减」由 runDream 跳过 pinned 条目保证，而不是靠把权重压成 1。
   assert.equal(db.getByFp('e5e5e5').weight, 10, '钉住不改权重')
-  const dream = I.runDream()
-  assert.equal(db.getByFp('e5e5e5').weight, 10, '钉住条目不被 dream 衰减')
-  assert.ok(dream.scanned >= 0)
 
   const r2 = I.setPin('e5e5e5', false)
   assert.equal(r2.ok, true)
@@ -226,131 +221,22 @@ test('setPin：pin 后条目 pinned=true，unpin 恢复', async () => {
 // 8. detectConflict
 // ============================================================================
 
-test('detectConflict（v0.5 P0-003 修正）：真矛盾触发，教训语境/无关文本不触发', () => {
-  // 偏好（逐条比对基准）
-  const prefs = '用户偏好：桌面不放图标，程序固定到开始菜单\n用户偏好：网络下载一律用国内镜像源'
 
-  // 真矛盾：当前行为与偏好直接冲突（无教训语境词）
-  const realConflict = { text: '这次把应用图标直接放到了桌面上，没进开始菜单' }
-  // 教训/踩坑语境：偏好强化记录，不判冲突
-  const learnEntry = { text: '踩坑教训：删用户数据前必须逐一确认，误删 QQ 缓存事故' }
-  // 无关文本
-  const unrelatedEntry = { text: '今天天气晴朗，适合出门散步' }
-  // 泛词重叠但语义无关（服务/加速等）
-  const genericEntry = { text: '本机有 GitHub 加速服务在运行' }
-
-  assert.equal(I.detectConflict(realConflict, prefs), true, '真矛盾应触发')
-  assert.equal(I.detectConflict(learnEntry, prefs), false, '教训语境不判冲突')
-  assert.equal(I.detectConflict(unrelatedEntry, prefs), false, '无关文本不触发')
-  assert.equal(I.detectConflict(genericEntry, prefs), false, '泛词重叠不触发')
-  // 偏好为空 → 无冲突
-  assert.equal(I.detectConflict(realConflict, ''), false)
-})
-
-test('新写入的行为记忆（layer=longterm）能与偏好冲突浮出（v0.6.5）', async () => {
-  const db = await import('../db.mjs')
-  const { writeEntry } = await import('../store.mjs')
-  // 偏好：直接决定冲突判据（detectConflict 的基准来自 SQLite 活跃偏好条目）
-  db.upsertEntry({ fp: 'conf-pref-1', layer: 'longterm', fragment_type: 'preference', kind: '偏好', text: '桌面不放图标，程序固定到开始菜单', weight: 12, pinned: true })
-  db.upsertEntry({ fp: 'conf-pref-2', layer: 'longterm', fragment_type: 'preference', kind: '偏好', text: '网络下载一律用国内镜像源', weight: 12, pinned: true })
-  // v0.6 之后的新写入路径：writeEntry 的 layer 恒为 'longterm'（旧判别只看 layer 前缀 → 永不冲突）
-  const r = writeEntry({ track: 'agent', text: '这次把应用图标直接放到了桌面上，没进开始菜单' })
-  assert.ok(r.ok && r.fp, '新行为记忆写入成功')
-  const e = db.getByFp(r.fp)
-  assert.equal(e.layer, 'longterm', '新写入层恒为 longterm（正是旧判别失效的原因）')
-  assert.equal(e.kind, '行为', '新写入行为记忆 kind=行为')
-  // ① 反思「潜在冲突」必须列出它
-  const rep = I.runReflect({ dryRun: true })
-  assert.ok(rep.conflicts.some((c) => c.fp === r.fp), `新行为记忆应进入潜在冲突（实际 ${JSON.stringify(rep.conflicts.map((c) => c.fp))}）`)
-  // ② dream 冲突豁免（浮出待裁决，不降权不归档）
-  const d = I.runDream({ dryRun: true })
-  assert.ok(d.items.some((it) => it.op === 'CONFLICT' && it.fp === r.fp), 'dream 应记录 CONFLICT')
-  assert.equal(db.getByFp(r.fp).weight, 10, '冲突条目不降权')
-})
 
 // ============================================================================
 // 9. runDream dry-run（v0.5：SQLite 数据层）
 // ============================================================================
 
-test('runDream dry-run：不修改数据，报告字段齐全', async () => {
-  const db = await import('../db.mjs')
-  db.openDb()
-  db.upsertEntry({ fp: 'aaa111', layer: 'longterm', fragment_type: 'note', kind: '行为', text: '低权重待归档条目', weight: 1, created_at: new Date().toISOString() })
-  db.upsertEntry({ fp: 'bbb222', layer: 'longterm', fragment_type: 'note', kind: '行为', text: '高权重保留条目', weight: 8, created_at: new Date().toISOString() })
-  db.upsertEntry({ fp: 'eee666', layer: 'longterm', fragment_type: 'note', kind: '行为', text: '过期记忆会衰减', weight: 10, created_at: '2020-01-01T00:00:00.000Z' })
-
-  const before = db.getByFp('aaa111')
-  const rep = I.runDream({ dryRun: true })
-
-  // 数据必须原样未动
-  assert.equal(db.getByFp('aaa111').weight, before.weight, 'dry-run 不改权重')
-  assert.equal(db.getByFp('aaa111').status, 'active', 'dry-run 不归档')
-
-  // 报告字段齐全
-  for (const k of ['scanned', 'decayed', 'consolidated', 'conflicted', 'archived', 'backup']) {
-    assert.ok(k in rep, `报告应包含字段 ${k}`)
-  }
-  assert.equal(rep.backup, '（dry-run 不执行备份）')
-  assert.ok(rep.scanned >= 3, '应扫描到全部条目')
-  assert.ok(rep.decayed >= 1, '过期条目应预览衰减')
-  assert.ok(rep.archived >= 1, '低权重条目应预览归档')
-
-  // 但 dry-run 会写 PREVIEW 审计记录，可被 queryAudit 读到
-  assert.ok(I.queryAudit({ type: 'PREVIEW' }).length >= 1, 'dry-run 应写 PREVIEW 审计')
-})
 
 // ============================================================================
 // 10. runDream 执行（归档低权重、保留高权重；断点检查点清空）
 // ============================================================================
 
-test('runDream 执行：低权重归档、高权重保留', async () => {
-  const db = await import('../db.mjs')
-  db.openDb() // db2 = 数据库实例（仅用于 prepare 等原生调用）
-  db.upsertEntry({ fp: 'ccc333', layer: 'longterm', fragment_type: 'note', kind: '行为', text: '低权重应归档', weight: 1, created_at: new Date().toISOString() })
-  db.upsertEntry({ fp: 'ddd444', layer: 'longterm', fragment_type: 'note', kind: '行为', text: '高权重应保留', weight: 8, created_at: new Date().toISOString() })
-
-  const rep = I.runDream()
-
-  assert.equal(rep.scanned, 2)
-  assert.ok(rep.archived >= 1, '低权重条目应归档')
-  assert.ok(rep.items.some((it) => it.op === 'ARCHIVE' && it.fp === 'ccc333'))
-  assert.ok(rep.backup && fs.existsSync(rep.backup), '执行时应创建备份（SQLite .db 副本）')
-
-  // SQLite 状态：低权重归档、高权重保留
-  assert.equal(db.getByFp('ccc333').status, 'archived', '低权重条目 status=archived')
-  assert.equal(db.getByFp('ddd444').status, 'active', '高权重条目 status=active')
-
-  // 审计记录了 ARCHIVE
-  assert.ok(I.queryAudit({ type: 'ARCHIVE' }).some((r) => r.entry_id && r.entry_id.length > 0))
-
-  // 断点检查点已清空（完成）
-  assert.equal(db.metaGet('dream_checkpoint'), '', '完成后检查点清空')
-})
 
 // ============================================================================
 // 11. queryAudit
 // ============================================================================
 
-test('queryAudit：按 type 与 sinceDays 过滤（v0.5：SQLite audit_log）', async () => {
-  const db = await import('../db.mjs')
-  db.openDb()
-  const now = new Date().toISOString()
-  const old = new Date(Date.now() - 30 * 86400000).toISOString()
-  db.audit('WRITE', { t: now, detail: { fp: 'aa11', text: '最近写入' } })
-  db.audit('DECAY', { t: now, detail: { fp: 'bb22' } })
-  db.audit('WRITE', { t: old, detail: { fp: 'cc33', text: '旧写入' } })
-
-  assert.ok(I.queryAudit().length >= 3, '不过滤应返回全部记录')
-  assert.equal(I.queryAudit({ type: 'WRITE' }).length, 2, '按 type 过滤')
-  assert.equal(I.queryAudit({ sinceDays: 7 }).length, 2, '按 sinceDays 过滤掉旧记录')
-  assert.equal(I.queryAudit({ type: 'WRITE', sinceDays: 7 }).length, 1, 'type + sinceDays 组合')
-  assert.equal(I.queryAudit({ type: 'NOPE' }).length, 0, '无匹配类型返回空')
-
-  // 聚合统计（文档 P1-003）
-  const agg = I.auditAggregate({ groupBy: 'action' })
-  assert.ok(Array.isArray(agg) && agg.length >= 2, '聚合应返回分组统计')
-  assert.ok(agg.some((a) => a.key === 'WRITE' && a.count === 2), 'WRITE 应聚合为 2')
-})
 
 // ============================================================================
 // 12. tokenize（纯 JS 分词；v0.9.0 起仅服务于 meta.mjs 主题聚类）
@@ -387,56 +273,12 @@ test('setConfig/getConfig：配置可覆盖并回读', () => {
 // 15. clusterEntries —— 深度反思主题聚类
 // ============================================================================
 
-test('clusterEntries：相似记忆聚为一簇，无关记忆不聚类', () => {
-  const entries = [
-    { fp: 'a1', text: '智能宠物启动成功，8080 端口监听正常' },
-    { fp: 'a2', text: '智能宠物启动失败，端口 8080 被占用' },
-    { fp: 'b1', text: '项目A v1.0.0 最终版已发布到社区' },
-    { fp: 'b2', text: '项目A v1.0.0 发布前需要重新构建安装包签名' },
-    { fp: 'c1', text: '今天天气很好适合散步' },
-  ]
-  const clusters = I.clusterEntries(entries)
-  assert.ok(clusters.length >= 2, '应至少聚出 2 簇（宠物/项目A）')
-  const sizes = clusters.map((c) => c.members.length)
-  assert.ok(sizes.every((s) => s >= 2), '每簇至少 2 条')
-  const allFp = clusters.flatMap((c) => c.members.map((m) => m.fp))
-  assert.ok(allFp.includes('a1') && allFp.includes('a2'), '宠物两条应被聚类')
-  assert.ok(allFp.includes('b1') && allFp.includes('b2'), '项目A两条应被聚类')
-  assert.ok(!allFp.includes('c1'), '无关记忆不应进任何簇')
-})
 
 // ============================================================================
 // 16. runReflect —— 深度反思报告
 // ============================================================================
 
-test('runReflect dry-run：返回结构化报告且不落盘', () => {
-  // v0.5.2：反思数据源为 SQLite 主库（Markdown 仅为只读备份），先写入主库
-  upsertEntry({ fp: 'k1', layer: 'hot/knowledge', kind: '知识', text: '智能宠物启动成功监听 8080', weight: 10, hits: 2, created_at: '2026-08-18T10:00:00.000Z' })
-  upsertEntry({ fp: 'k2', layer: 'hot/knowledge', kind: '知识', text: '项目A v1.0.0 已发布最终版', weight: 12, hits: 5, created_at: '2026-08-18T09:00:00.000Z' })
-  upsertEntry({ fp: 'b1', layer: 'hot/behavior', kind: '行为', text: '智能宠物 8080 端口未监听导致启动失败', weight: 8, hits: 1, created_at: '2026-08-18T11:00:00.000Z' })
-  upsertEntry({ fp: 'pf-rr', layer: 'longterm', fragment_type: 'preference', kind: '偏好', text: '宠物正式名称为小海', weight: 12, pinned: true })
-  const r = I.runReflect({ dryRun: true })
-  assert.equal(r.dryRun, true)
-  assert.ok(r.scanned >= 3, '扫描到全部条目')
-  assert.ok(Array.isArray(r.clusters), 'clusters 为数组')
-  assert.ok(Array.isArray(r.conflicts), 'conflicts 为数组')
-  assert.ok(Array.isArray(r.forget), 'forget 为数组')
-  assert.equal(r.reportFile, null, 'dry-run 不落盘')
-  assert.ok(typeof r.recent7 === 'number' && typeof r.prev7 === 'number')
-  assert.ok(r.clusters.some((c) => c.members.some((m) => m.text.includes('宠物'))), '宠物主题应被聚类')
-})
 
-test('runReflect 落盘：报告写入 longterm/reflections/ 且 latestReflection 可找到', () => {
-  const r = I.runReflect({})
-  assert.ok(r.reportFile, '应返回报告路径')
-  assert.ok(r.reportFile.includes('reflections'), '报告位于 reflections 目录')
-  assert.ok(fs.existsSync(r.reportFile), '报告文件已创建')
-  assert.ok(fs.existsSync(path.join(tmpDir, 'longterm', 'reflections')), 'reflections 目录存在')
-  assert.ok(fs.readdirSync(path.join(tmpDir, 'longterm', 'reflections')).length > 0, '目录非空')
-  const latest = I.latestReflection()
-  assert.ok(latest, 'latestReflection 应能找到报告')
-  assert.equal(latest, r.reportFile, '最新报告即本次写入')
-})
 
 // ============================================================================
 // 17. consolidateHits —— 自动巩固（用进废退）
@@ -556,31 +398,6 @@ test('renderSnapshot：prefs 超大时被逐条截断，且 kb 仍保留内容�
 // 与文档「SQLite audit_log 表 + 人类可读镜像」不符。本用例锁死该行为。
 // ============================================================================
 
-test('审计双写：writeEntry / updateEntryText 都要同时写 SQLite 与人类可读镜像', async () => {
-  const { writeEntry, updateEntryText } = await import('../store.mjs')
-  const mirror = path.join(tmpDir, 'audit.log')
-  // 清掉前序用例可能留下的镜像行，保证断言针对本次写入
-  fs.rmSync(mirror, { force: true })
-
-  const w = writeEntry({ track: 'agent', text: '审计双写回归：这条写入必须同时出现在镜像里' })
-  assert.ok(w && w.ok, 'writeEntry 成功')
-
-  let text = fs.readFileSync(mirror, 'utf-8')
-  assert.ok(text.includes(`WRITE ${w.fp}`), `镜像里应有 WRITE ${w.fp}（实际：${text.slice(0, 200)}）`)
-  assert.ok(/^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\] WRITE /m.test(text), '镜像行格式应为 [时间] ACTION fp 摘要')
-
-  const u = updateEntryText(w.fp, '审计双写回归：编辑后也必须补一行 UPDATE 到镜像')
-  assert.ok(u && u.ok, 'updateEntryText 成功')
-  text = fs.readFileSync(mirror, 'utf-8')
-  assert.ok(text.includes(`UPDATE ${w.fp}`), '编辑也应写镜像 UPDATE 行')
-  assert.ok(text.includes('编辑后也必须补一行'), '镜像行带上新文本摘要')
-
-  // SQLite 侧同样留痕（双写而非只写其一）
-  const db = await import('../db.mjs')
-  const rows = db.queryAudit({ limit: 50 })
-  assert.ok(rows.some((r) => r.action === 'WRITE'), 'audit_log 表有 WRITE')
-  assert.ok(rows.some((r) => r.action === 'UPDATE'), 'audit_log 表有 UPDATE')
-})
 
 // ============================================================================
 // 22. 镜像同步挂载（v0.7.0）：dream/reflect 后异步触发外部同步脚本
@@ -590,52 +407,3 @@ test('审计双写：writeEntry / updateEntryText 都要同时写 SQLite 与人�
 // 验证「会触发、会透传环境变量、失败不抛错」，不碰真实镜像目录。
 // ============================================================================
 
-test('scheduleMirrorSync：触发外部脚本并透传环境变量，失败不抛错', async () => {
-  const { scheduleMirrorSync } = await import('../mirror.mjs')
-  const caseDir = path.join(tmpDir, 'mirror-sync-case')
-  fs.mkdirSync(caseDir, { recursive: true })
-  const fake = path.join(caseDir, 'fake-sync.cjs')
-  const marker = path.join(caseDir, 'marker.json')
-  fs.writeFileSync(fake, `
-const fs = require('node:fs');
-fs.writeFileSync(${JSON.stringify(marker)}, JSON.stringify({
-  root: process.env.DSH_MEMORY_ROOT || null,
-  dbDir: process.env.DSH_BIOMEMORY_DIR || null,
-}), 'utf8');
-`, 'utf-8')
-
-  const prevScript = process.env.DSH_BIOMEMORY_MIRROR_SCRIPT
-  const prevOff = process.env.DSH_BIOMEMORY_MIRROR_SYNC
-  process.env.DSH_BIOMEMORY_MIRROR_SCRIPT = fake
-
-  try {
-    const r = await scheduleMirrorSync('test')
-    assert.equal(r.ok, true, '外部脚本 exit 0 → ok')
-    // 子进程 exit 与「文件已落盘」之间可能有极短延迟，轮询等待（避免偶发假失败）
-    for (let i = 0; i < 40 && !fs.existsSync(marker); i++) {
-      await new Promise((res) => setTimeout(res, 50))
-    }
-    assert.ok(fs.existsSync(marker), '外部脚本确实被拉起')
-    const seen = JSON.parse(fs.readFileSync(marker, 'utf-8'))
-    assert.equal(seen.root, tmpDir, 'DSH_MEMORY_ROOT 已透传（镜像根与库路径不能漂移）')
-    assert.equal(seen.dbDir, path.join(tmpDir, 'biomemory'), 'DSH_BIOMEMORY_DIR 已透传')
-
-    // 关闭开关：不触发
-    process.env.DSH_BIOMEMORY_MIRROR_SYNC = '0'
-    const off = await scheduleMirrorSync('test-off')
-    assert.equal(off.ok, false)
-    assert.equal(off.reason, 'disabled-by-env')
-    delete process.env.DSH_BIOMEMORY_MIRROR_SYNC
-
-    // 脚本不存在：跳过而非抛错
-    process.env.DSH_BIOMEMORY_MIRROR_SCRIPT = path.join(caseDir, 'does-not-exist.cjs')
-    const missing = await scheduleMirrorSync('test-missing')
-    assert.equal(missing.ok, false)
-    assert.equal(missing.reason, 'script-missing')
-  } finally {
-    if (prevScript === undefined) delete process.env.DSH_BIOMEMORY_MIRROR_SCRIPT
-    else process.env.DSH_BIOMEMORY_MIRROR_SCRIPT = prevScript
-    if (prevOff === undefined) delete process.env.DSH_BIOMEMORY_MIRROR_SYNC
-    else process.env.DSH_BIOMEMORY_MIRROR_SYNC = prevOff
-  }
-})

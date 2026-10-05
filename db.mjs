@@ -68,7 +68,11 @@ function migrateSchema(db) {
       created_at    TEXT,
       last_accessed TEXT,
       status        TEXT NOT NULL DEFAULT 'active',
-      vector        BLOB
+      vector        BLOB,
+      realm         TEXT,
+      mtype         TEXT,
+      trigger       TEXT,
+      mkey          TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_entries_fp ON entries(fp);
     CREATE INDEX IF NOT EXISTS idx_entries_layer ON entries(layer);
@@ -76,27 +80,35 @@ function migrateSchema(db) {
     CREATE INDEX IF NOT EXISTS idx_entries_status ON entries(status);
     CREATE INDEX IF NOT EXISTS idx_entries_weight ON entries(weight);
 
-    CREATE TABLE IF NOT EXISTS audit_log (
-      id       INTEGER PRIMARY KEY AUTOINCREMENT,
-      t        TEXT NOT NULL,
-      actor    TEXT NOT NULL DEFAULT 'agent',
-      action   TEXT NOT NULL,
-      entry_id TEXT,
-      detail   TEXT
-    );
-    CREATE INDEX IF NOT EXISTS idx_audit_t ON audit_log(t);
-    CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_log(action);
-    CREATE INDEX IF NOT EXISTS idx_audit_entry ON audit_log(entry_id);
 
     CREATE TABLE IF NOT EXISTS meta (
       k TEXT PRIMARY KEY,
       v TEXT
     );
+    CREATE TABLE IF NOT EXISTS trigger_counts (
+      trigger    TEXT NOT NULL,
+      realm      TEXT NOT NULL,
+      count      INTEGER NOT NULL DEFAULT 0,
+      last_at    TEXT,
+      PRIMARY KEY (trigger, realm)
+    );
+    CREATE TABLE IF NOT EXISTS chains (
+      trigger    TEXT PRIMARY KEY,
+      realm      TEXT,
+      steps      TEXT NOT NULL DEFAULT '[]',
+      use_count  INTEGER NOT NULL DEFAULT 0,
+      last_used  TEXT,
+      created_at TEXT
+    );
   `)
   // v0.6.1：记忆来源与语义类别（评审建议 source_ref + memory_class）——
   // 旧库用 ALTER TABLE 补列（列已存在时 ADD COLUMN 抛错，静默忽略）
-  for (const ddl of ['source_ref TEXT', 'memory_class TEXT']) {
+  for (const ddl of ['source_ref TEXT', 'memory_class TEXT', 'realm TEXT', 'mtype TEXT', 'trigger TEXT', 'mkey TEXT']) {
     try { db.exec(`ALTER TABLE entries ADD COLUMN ${ddl}`) } catch { /* 列已存在 */ }
+  }
+  // v0.10.0：新列索引必须在 ALTER 之后建（旧库先加列，否则 CREATE INDEX 找不到列）
+  for (const idx of ['trigger', 'mtype', 'realm']) {
+    try { db.exec(`CREATE INDEX IF NOT EXISTS idx_entries_${idx} ON entries(${idx})`) } catch { /* 索引已存在 */ }
   }
 }
 
@@ -126,6 +138,10 @@ function toRow(e) {
     vector: e.vector ?? null,
     source_ref: e.source_ref ?? null,
     memory_class: e.memory_class ?? null,
+    realm: e.realm ?? null,
+    mtype: e.mtype ?? null,
+    trigger: e.trigger ?? null,
+    mkey: e.mkey ?? null,
   }
 }
 
@@ -152,6 +168,10 @@ function fromRow(r) {
     status: r.status,
     source_ref: r.source_ref ?? undefined,
     memory_class: r.memory_class ?? undefined,
+    realm: r.realm ?? undefined,
+    mtype: r.mtype ?? undefined,
+    trigger: r.trigger ?? undefined,
+    mkey: r.mkey ?? undefined,
   }
 }
 
@@ -186,26 +206,33 @@ export function upsertEntry(e) {
       vector: e.vector !== undefined ? e.vector : existing.vector,
       source_ref: e.source_ref !== undefined ? e.source_ref : existing.source_ref,
       memory_class: e.memory_class !== undefined ? e.memory_class : existing.memory_class,
+      realm: keep(e.realm, existing.realm),
+      mtype: keep(e.mtype, existing.mtype),
+      trigger: keep(e.trigger, existing.trigger),
+      mkey: keep(e.mkey, existing.mkey),
     }
     db.prepare(`UPDATE entries SET
       layer=?, project_id=?, project_name=?, fragment_type=?, kind=?, mode=?,
       summary=?, text=?, entities=?, weight=?, hits=?, pinned=?, pin_reason=?,
-      last_accessed=?, status=?, vector=?, source_ref=?, memory_class=?
+      last_accessed=?, status=?, vector=?, source_ref=?, memory_class=?,
+      realm=?, mtype=?, trigger=?, mkey=?
       WHERE fp = ?`).run(
       m.layer, m.project_id, m.project_name, m.fragment_type, m.kind, m.mode,
       m.summary, m.text, m.entities, m.weight, m.hits, m.pinned, m.pin_reason,
-      m.last_accessed, m.status, m.vector, m.source_ref, m.memory_class, r.fp,
+      m.last_accessed, m.status, m.vector, m.source_ref, m.memory_class,
+      m.realm, m.mtype, m.trigger, m.mkey, r.fp,
     )
     return existing.entry_id
   }
   db.prepare(`INSERT INTO entries
     (entry_id, fp, layer, project_id, project_name, fragment_type, kind, mode,
      summary, text, entities, weight, hits, pinned, pin_reason, created_at,
-     last_accessed, status, vector, source_ref, memory_class)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+     last_accessed, status, vector, source_ref, memory_class, realm, mtype, trigger, mkey)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
     r.entry_id, r.fp, r.layer, r.project_id, r.project_name, r.fragment_type, r.kind, r.mode,
     r.summary, r.text, r.entities, r.weight, r.hits, r.pinned, r.pin_reason,
     r.created_at ?? isoNow(), r.last_accessed, r.status, r.vector, r.source_ref, r.memory_class,
+    r.realm, r.mtype, r.trigger, r.mkey,
   )
   return r.entry_id
 }
@@ -241,8 +268,7 @@ export function stats() {
   const pinned = db.prepare('SELECT COUNT(*) c FROM entries WHERE pinned = 1').get().c
   const byLayer = Object.fromEntries(db.prepare('SELECT layer, COUNT(*) c FROM entries GROUP BY layer').all().map((r) => [r.layer, r.c]))
   const byStatus = Object.fromEntries(db.prepare('SELECT status, COUNT(*) c FROM entries GROUP BY status').all().map((r) => [r.status, r.c]))
-  const auditCount = db.prepare('SELECT COUNT(*) c FROM audit_log').get().c
-  return { total, pinned, layers: byLayer, status: byStatus, auditCount, dbPath: dbPath() }
+  return { total, pinned, layers: byLayer, status: byStatus, dbPath: dbPath() }
 }
 
 /** 按指纹删除（物理）。v0.8.0：不再连带删除审计行——删条目不等于抹掉历史（审计是追溯链） */
@@ -292,51 +318,6 @@ export function allEntries({ includeArchived = false } = {}) {
 // ---------- 审计 ----------
 
 /** 记录审计事件（五元组：actor/t/action/entry_id/detail） */
-export function audit(event, data = {}) {
-  const db = openDb()
-  db.prepare('INSERT INTO audit_log (t, actor, action, entry_id, detail) VALUES (?,?,?,?,?)').run(
-    data.t ?? isoNow(),
-    data.actor ?? 'agent',
-    event,
-    data.entry_id ?? null,
-    typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail ?? {}),
-  )
-}
-
-/** 审计查询：时间/类型/条目/操作者过滤 + 分页 */
-export function queryAudit({ sinceDays, type, entryId, actor, limit = 50 } = {}) {
-  const db = openDb()
-  const where = []
-  const args = []
-  if (sinceDays) {
-    const since = new Date(Date.now() - sinceDays * 86400000).toISOString()
-    where.push('t >= ?'); args.push(since)
-  }
-  if (type) { where.push('action = ?'); args.push(type) }
-  if (entryId) { where.push('entry_id = ?'); args.push(entryId) }
-  if (actor) { where.push('actor = ?'); args.push(actor) }
-  const sql = `SELECT * FROM audit_log ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY id DESC LIMIT ?`
-  args.push(limit)
-  return db.prepare(sql).all(...args).map((r) => ({ t: r.t, actor: r.actor, action: r.action, entry_id: r.entry_id, detail: r.detail }))
-}
-
-/** 审计聚合统计（文档 P1-003：按时间/事件类型/项目维度分组） */
-export function auditAggregate({ sinceDays, groupBy = 'action' } = {}) {
-  const db = openDb()
-  const where = []
-  const args = []
-  if (sinceDays) {
-    const since = new Date(Date.now() - sinceDays * 86400000).toISOString()
-    where.push('t >= ?'); args.push(since)
-  }
-  const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : ''
-  const col = groupBy === 'day' ? "substr(t,1,10)" : groupBy === 'entry' ? 'entry_id' : 'action'
-  const rows = db.prepare(`SELECT ${col} k, COUNT(*) c FROM audit_log ${whereSql} GROUP BY ${col} ORDER BY c DESC`).all(...args)
-  return rows.map((r) => ({ key: r.k, count: r.c }))
-}
-
-// ---------- meta（配置/检查点） ----------
-
 export function metaGet(k) {
   const db = openDb()
   const v = db.prepare('SELECT v FROM meta WHERE k = ?').get(k)?.v ?? null
@@ -452,4 +433,68 @@ export function migrationStatus() {
 /** 关闭数据库（测试用） */
 export function closeDb() {
   if (_db) { try { _db.close() } catch { /* ignore */ } _db = null }
+}
+
+
+// ---------- v2：墓碑 / 触发式召回 / 工作流链（trigger + chain） ----------
+
+/** 墓碑：状态切换而不物理删除（active / archived / deleted） */
+export function setStatus(fp, status) {
+  openDb().prepare('UPDATE entries SET status = ? WHERE fp = ?').run(status, fp)
+  return true
+}
+
+/** 按 trigger 命中的活跃条目（同 realm 优先，其次全局） */
+export function byTrigger(triggers, { realm } = {}) {
+  const list = (triggers || []).filter(Boolean)
+  if (!list.length) return []
+  const db = openDb()
+  const ph = list.map(() => '?').join(',')
+  const rows = db.prepare(`SELECT * FROM entries WHERE status='active' AND trigger IN (${ph})`).all(...list)
+  return rows.map(fromRow).sort((a, b) => (b.realm === realm) - (a.realm === realm))
+}
+
+/** 同 trigger 的活跃条目数（>3 触发 workflow 升级） */
+export function countByTrigger(trigger) {
+  const r = openDb().prepare("SELECT COUNT(*) c FROM entries WHERE trigger = ? AND status = 'active'").get(trigger)
+  return r ? r.c : 0
+}
+
+/** 工作流链：读一条 */
+export function chainGet(trigger) {
+  const r = openDb().prepare('SELECT * FROM chains WHERE trigger = ?').get(trigger)
+  return r ? { trigger: r.trigger, realm: r.realm, steps: safeJson(r.steps, []), use_count: r.use_count, last_used: r.last_used, created_at: r.created_at } : undefined
+}
+
+/** 工作流链：写入（存在则更新步骤） */
+export function chainUpsert({ trigger, realm, steps }) {
+  const db = openDb()
+  const ex = chainGet(trigger)
+  if (ex) db.prepare('UPDATE chains SET steps=?, realm=?, last_used=? WHERE trigger=?').run(JSON.stringify(steps ?? ex.steps), realm ?? ex.realm, isoNow(), trigger)
+  else db.prepare('INSERT INTO chains (trigger, realm, steps, use_count, last_used, created_at) VALUES (?,?,?,?,?,?)').run(trigger, realm ?? null, JSON.stringify(steps || []), 0, isoNow(), isoNow())
+  return chainGet(trigger)
+}
+
+/** 工作流链：全部（最近使用在前） */
+export function chainAll() {
+  return openDb().prepare('SELECT * FROM chains ORDER BY last_used DESC').all()
+    .map((r) => ({ trigger: r.trigger, realm: r.realm, steps: safeJson(r.steps, []), use_count: r.use_count, last_used: r.last_used, created_at: r.created_at }))
+}
+
+/** 链被召回时记一次使用 */
+export function chainTouched(trigger) {
+  openDb().prepare('UPDATE chains SET use_count = use_count + 1, last_used = ? WHERE trigger = ?').run(isoNow(), trigger)
+}
+
+
+/** trigger 出现次数（写入路径调用；>3 触发 workflow 升级） */
+export function bumpTrigger(trigger, realm) {
+  const d = openDb()
+  d.prepare('INSERT INTO trigger_counts (trigger, realm, count, last_at) VALUES (?,?,1,?) ON CONFLICT(trigger, realm) DO UPDATE SET count = count + 1, last_at = excluded.last_at').run(trigger, realm || 'user', isoNow())
+  return triggerCount(trigger, realm)
+}
+
+export function triggerCount(trigger, realm) {
+  const r = openDb().prepare('SELECT count FROM trigger_counts WHERE trigger = ? AND realm = ?').get(trigger, realm || 'user')
+  return r ? r.count : 0
 }

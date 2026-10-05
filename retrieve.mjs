@@ -18,7 +18,7 @@
 // ============================================================================
 
 import * as db from './db.mjs'
-import { CFG, prefsText, audit } from './shared.mjs'
+import { CFG, prefsText,  } from './shared.mjs'
 import { entryStatus, consolidateHits } from './store.mjs'
 
 // ---------- 纯 JS 分词与词频余弦（聚类用；无外部依赖） ----------
@@ -172,11 +172,6 @@ export async function queryEntries(query, limit = CFG.maxQueryResults, opts = {}
   // 用进废退：带关键词的真实召回才巩固（list 浏览不计）
   if (ql && hitFps.size) {
     const files = consolidateHits(hitFps)
-    if (files) audit('RECALL', { detail: { count: hitFps.size, files } })
-  }
-  // 浏览场景（无关键词，无相关性可言）：与偏好冲突的行为记忆置顶（冲突浮出，供用户裁决）
-  if (!ql) {
-    out.sort((a, b) => (b.status === 'conflict') - (a.status === 'conflict'))
   }
   // DSH 0.1.2-rc.1 起工具返回值须为 lossless JSON（dsh-tools 校验拒绝 undefined/NaN/-0）
   for (const it of out) for (const k of Object.keys(it)) if (it[k] === undefined || (typeof it[k] === 'number' && !Number.isFinite(it[k]))) it[k] = null

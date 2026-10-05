@@ -1,323 +1,148 @@
 # dsh-biomemory
 
-> **Biomimetic memory for DeepSeek Harness**: cross-session memory that works like a human brain — layered recall, graded review, memory metabolism, fully transparent and editable.
->
-> [简体中文](README.md) · [English](README.en.md)
+> **A memory layer for DeepSeek Harness**: one local file, zero services, zero API calls — recall driven by **trigger signals**, so the right memory shows up at the right moment.
 
-> **v0.9.2** · MIT License · DSH ≥ 0.1.1-rc.2 (verified on 0.1.5-rc.1, 0.1.5-rc.2 and **0.2.0-rc.2 (Desktop)**) · Node ≥ 22.19.0
->
-> ⚠️ Node note: this plugin uses `node:sqlite`. Verified on **Node 24.19**; on Node 22.x the module **may still require `--experimental-sqlite`** (no 22.x available here, so unverified). If startup reports `node:sqlite` unavailable, upgrade to 24.x or pass that flag.
+**v0.10.0** · MIT License · DSH >= 0.1.1-rc.2 (tested on 0.2.0-rc.2 desktop) · Node >= 22.19.0
 
-A cross-session memory plugin for [DeepSeek Harness](https://github.com/deepseek-ai/dsh) (DSH) that works like a human brain: **layered recall, graded review, memory metabolism, fully transparent and editable**. The data layer is SQLite (built-in `node:sqlite`, WAL mode, zero external dependencies); legacy Markdown memories are migrated automatically on first start and kept as a read-only backup.
+---
 
-## Features
+## What it is
 
-| Capability | Description |
-| --- | --- |
-| Layered memory | Three layers — Memory (store), Retrieved (query candidates), Applied (injected snapshot). Retrieved ≠ adopted; the model decides how to use them in context |
-| Graded approval | Important memories (user preferences / project decisions / lessons learned) require human approval; ordinary facts are saved automatically. Falls back per `approvalFallback` (auto / deny) when no approval channel exists |
-| Automatic consolidation | A "consolidate this turn" directive is injected after each turn ends; a **frozen snapshot** is injected at session start (pinned memories and preferences first, conflicting behavior entries surfaced and marked `[conflict]`) |
-| Memory metabolism | Half-life decay + reference consolidation (use-it-or-lose-it) + conflict exemption + low-weight archiving; automatic backup before runs, checkpoint resume, and dry-run preview |
-| Deep reflection | Topic clustering / trend statistics / conflict alerts / forget candidates — purely local, no LLM; reports written to `longterm/reflections/` |
-| Memory classes | Auto-inferred `memory_class`: user_decision / user_preference / fact / model_suggestion / model_inference (a suggestion ≠ a decision) |
-| Source traceability | `source_ref` records provenance (`session:<id>` by default); structured audit log with a 5-tuple (time / actor / event / entry / detail) |
-| Deterministic retrieval | One path: field-weighted keyword relevance (text 1.0 / summary 0.5 / entities 0.25) + bounded occurrence bonus + bounded weight bonus (≤50%). v0.9.0 removed the embedding model and the semantic/hybrid modes |
-| Fully editable | Every entry can be edited, removed, or restored (database backed up before removal); a single `.db` file holds everything and can be inspected with standard tools |
-| Native-module free | `node:sqlite` built-in + pure JS — no native module conflicts; **pure host plugin** (no UI half), used only through the `memory` tool and `/memory` command. |
+In one line: **a memory layer, not a memory platform.**
 
-## Installation
+- **Not**: external service, vector search, embedding models, knowledge graphs, cloud sync, web UI.
+- **Is**: one SQLite file plus a deterministic rule set for "when should what be recalled".
 
-### From GitHub (recommended)
+The difference from a memory platform is not the feature count — it is that **there is nothing extra to run**. Install the plugin; the data lives in `.dsh/biomemory/biomemory.db` on your machine, and copying that file migrates your memory.
 
-```bash
-# Requires git; replace --profile web with your profile name
-dsh plugin --profile web add github:KLRSL/dsh-biomemory
+## Four layers
+
+### 1. Storage: single-file SQLite
+
+| Field | Meaning |
+|---|---|
+| `realm` | Isolation: `user` or `project:<cwd>` |
+| `mtype` | Memory type: `workflow` / `error` / `decision` / `fact` |
+| `trigger` | Trigger signal string (below) |
+| `mkey` | Topic key used for same-key overwrite |
+| `text` | The memory itself |
+| `created_at` / `last_accessed` / `hits` | Lifecycle: created / last used / use count |
+| `status` | `active` / `archived` / `deleted` (deletion is a **tombstone**) |
+
+Two helper tables: `chains` (workflow chains) and `trigger_counts` (repetition counter for workflow promotion).
+
+### 2. Recall: driven by trigger signals
+
+The plugin does not wait for the model to "remember". It watches what is happening:
+
+- Signals: the session working directory (`session.cwd`) plus the last 12 tool calls (names and arguments — file paths, commands, error codes).
+- Three trigger shapes only, readable and explainable:
+  - `file:<name>` — e.g. `file:package.json`
+  - `tool:<tool>` — e.g. `tool:pwsh`
+  - `err:<CODE>` — e.g. `err:MODULE_NOT_FOUND`
+- On a hit, memories are injected ordered **workflow > error > decision > fact**, then by last-used time; if a workflow chain matches, the **whole chain** is injected.
+- **Injection budget**: at most 8 items / 1200 characters per recall. No signal, no injection — and no tokens spent.
+
+### 3. Cleanup: five explainable rules
+
+Run `/memory compact`; every eviction is written to `compact.log`:
+
+1. A newer memory with the same `realm + type + key` overwrites the older one (tombstoned) on the write path;
+2. `fact`: unused (use count <= 1) for more than 30 days -> tombstone;
+3. `workflow` / `error` / `decision`: no TTL, but unused for more than 90 days -> half weight;
+4. `error` and `decision` are **never auto-deleted**;
+5. Every eviction/demotion is logged (time, fingerprint, rule, summary).
+
+### 4. Adaptation: workflows emerge from repetition
+
+When the same trigger appears **more than 3 times**, related memories are promoted to `workflow` and ordered into a chain:
+
+```
+when file:package.json: read package.json -> run tests -> then edit code
 ```
 
-### As a local bundle (development / link)
+A chain records **order, not causation** — it does not pretend to know why, only what you actually did last time.
+
+## Install
 
 ```bash
-# Run from the project directory
+# git required; replace --profile with your profile name
+dsh plugin --profile web add github:KLRSL/dsh-biomemory
+
+# local development (link)
 dsh plugin --profile web add link:./dsh-biomemory
 ```
 
-`dsh plugin` registers the package into `dsh.profile.bundles` and mounts the patch automatically; restart DSH afterwards.
+Restart DSH afterwards (the desktop app hot-mounts it).
 
-**Post-install verification**:
+## Usage
 
-```bash
-# 1. Tool registered — call it from a session (visible to the model)
-memory action=query text="test"
+### Tool `memory`
 
-# 2. Data layer ready — should appear after the first start
-ls ~/.dsh/biomemory/
-# biomemory.db  biomemory.db-wal  biomemory.db-shm
+| action | Description |
+|---|---|
+| `add` | Write a memory (`text` required; `track=user|agent`; `source` for provenance) |
+| `query` | Keyword query (`text`/`topK`/`fragmentTypes`/`includeArchived`) |
+| `list` / `update` / `remove` / `restore` / `pin` / `unpin` | Browse / edit / tombstone / roll back / pin / unpin |
+| `compact` | Run the five rules (`dryRun=true` to preview) |
+| `dump` | Export human-readable Markdown (including chains) |
 
-# 3. Legacy Markdown memories migrated automatically (kept as read-only backup)
-#    Check migration status via the Web API:
-#    GET /biomemory/api/status → migration field
+A second tool, `memory_recall`, is available for explicit "do you remember..." lookups.
 
-# 4. Usage - no UI required: use the memory tool or the /memory command
-#    memory action=query text="keyword"       # read (auto-recall also runs in the background)
-#    memory action=add track=agent text="..."  # write (important entries ask for approval)
+### Command `/memory`
+
+```
+/memory list | query <words> | add <text> | edit <fp> <text> | remove <fp> | undo <fp>
+/memory pin <fp> | unpin <fp> | entries [words]
+/memory compact [--dry-run] | dump
 ```
 
-## Quick Start
+### Write approval
 
-```text
-# ① Save a user preference (important memory → human approval; stored once approved)
-memory action=add track=user text="User prefers domestic mirrors for downloads" source="user statement"
+Important memories (user preferences / decisions / corrections) go through DSH's official approval. Approval is required before storing, and when the approval service is unavailable writes are **denied by default** (fail-closed; set `approvalFallback=auto` to relax).
 
-# ② Query (deterministic relevance ranking)
-memory action=query text="mirror" topK=5
+## Data and privacy
 
-# ③ Correct an entry (text only; metadata preserved)
-memory action=update fp="a1b2c3" text="User prefers domestic mirrors (Tsinghua pip / npmmirror)"
-
-# ④ Pin an important entry (exempt from decay, always in the session snapshot)
-memory action=pin fp="a1b2c3"
-
-# ⑤ Run metabolism + reflection (use --dry-run to preview first)
-memory action=dream dryRun=true
-memory action=reflect dryRun=true
-
-# ⑥ Audit (what has the memory system been doing lately?)
-memory action=audit sinceDays=7
-memory action=audit aggregate=true groupBy=action
-
-# ⑦ The /memory command family is also available at runtime
-/memory list
-/memory query preference
-```
-
-## Usage Guide
-
-### memory tool (action reference)
-
-| Action | Parameters | Description |
-| --- | --- | --- |
-| `add` | `text` (required), `track`=user\|agent, `source` | Save a memory; important entries request approval, falling back per `approvalFallback` |
-| `query` | `text`, `topK`, `minWeight`, `projectId`, `fragmentTypes`, `includeArchived` (`mode` is deprecated and ignored since v0.9.0) | Retrieve; hits are consolidated (use-it-or-lose-it) |
-| `update` | `fp`, `text` | Edit an entry (metadata such as pin/weight preserved; stale vector cleared; `UPDATE` audited) |
-| `remove` | `fp` | Delete an entry (database backed up first; restorable) |
-| `restore` | `fp` | Restore a deleted entry from the newest backup |
-| `list` | `topK` | List all entries; behavior memories conflicting with preferences are surfaced at the top |
-| `pin` / `unpin` | `fp` | Lock / unlock. Pin = no-forgetting only (exempt from decay/archive); it does not imply mandatory application every turn |
-| `dream` | `dryRun`, `resume` (default true) | Metabolism: decay / consolidation / conflict / archiving; checkpoint-resumable |
-| `reflect` | `dryRun` | Deep reflection: topic clustering / trends / conflict alerts / forget candidates |
-| `audit` | `type`, `sinceDays`, `aggregate`, `groupBy` (action\|day\|entry) | Structured audit queries and aggregation |
-
-Examples:
-
-```text
-memory action=add track=user text="The official name is 'DaFeiYu'; do not use old names" source="user statement"
-memory action=query text="UI rendering width rules" topK=10 minWeight=0.1 fragmentTypes=decision,preference
-memory action=audit type="DECAY" sinceDays=7
-memory action=audit aggregate=true groupBy=day
-```
-
-**Memory classes (auto-inferred at write time)**: `user_decision` (explicit user decision) · `user_preference` (user preference) · `fact` (ordinary fact) · `model_suggestion` (model suggestion) · `model_inference` (model inference). A suggestion ≠ a decision — model suggestions must never impersonate decisions the user made.
-
-### memory_recall tool
-
-Cross-session recall for "do you remember…" scenarios; same backend as `memory query`, semantically specialized for recollection:
-
-```text
-memory_recall text="the versioning rules we settled on"
-```
-
-### The /memory command family
-
-| Command | Description |
-| --- | --- |
-| `/memory list` | List all entries (conflicts surfaced at the top) |
-| `/memory query <term>` | Keyword search |
-| `/memory add <content>` | Write directly (human-initiated, no approval) |
-| `/memory edit <fp> <new text>` | Edit an entry |
-| `/memory remove <fp>` | Delete an entry (restorable) |
-| `/memory undo <fp>` | Restore a deleted entry |
-| `/memory pin <fp>` / `unpin <fp>` | Pin / unpin |
-| `/memory entries [term]` | List entries (optional filter term) |
-| `/memory dream [--dry-run]` | Run metabolism |
-| `/memory reflect [--dry-run]` | Run deep reflection |
-| `/memory audit [--since 7d] [--type DECAY]` | Audit query |
-
-### Frozen snapshot injection
-
-At session start the plugin freezes high-value memories into the system prompt (registered and frozen at startup, marked "session frozen"):
-
-- The header states the three-layer model explicitly: **this snapshot = Applied Context** (already injected); Memory (store) and Retrieved (query candidates) are not included; **retrieved ≠ adopted**.
-- Injection order: **pinned memories (top priority, exempt from decay) → user preferences (top priority) → recent knowledge → recent behavior**.
-- Behavior memories conflicting with preferences are **surfaced at the top with a `[conflict]` marker** for you to resolve.
-- A hot-section token budget `hotTokenLimit` (default 5000) applies; preferences and pinned entries are retained first when truncated.
-
-### Graded approval gate
-
-| Memory type | Approval mode |
-| --- | --- |
-| User preferences / project decisions / lessons (`track=user` or important keywords) | **Human approval** (ask) |
-| Ordinary facts | Automatic (auto) |
-| No approval channel (policy `never` / service missing) | Per `approvalFallback`: `auto` = save with a degraded-audit marker · `deny` = reject (fail-closed) |
-
-### Memory metabolism (Dream)
-
-Runs when your sleeping brain does its housekeeping — `/memory dream` or `memory action=dream`:
-
-1. **Half-life decay** (default 7 days): `w × 0.5^(age/halfLife)`, floored at 1.
-2. **Reference consolidation**: entries referenced ≥ `consolidateThreshold` (default 3) times gain +1 weight, capped at `weightCap` (default 20).
-3. **Conflict exemption**: behavior memories conflicting with preferences are neither decayed nor archived — they stay active and float to the top of listings and the snapshot for **your** judgment; editing the conflict away restores normal metabolism. A `CONFLICT` event is recorded.
-4. **Archiving**: entries below `decayThreshold` (default 3) get `status=archived` — moved, never deleted.
-
-The database is backed up automatically before a run (last 7 kept, `ROLLBACK` auditable); checkpoints are written every 100 entries so an interrupted run resumes with `resume=true`; `--dry-run` previews without writing.
-
-### Deep reflection (Reflect)
-
-Purely local, LLM-free periodic review: **topic clustering** (TF cosine similarity ≥ 0.25) · **trend stats** (last 7 days vs the previous week) · **conflict alerts** (potential behavior-vs-preference clashes) · **forget candidates** (low-weight entries). Reports go to `longterm/reflections/<timestamp>.md`; `--dry-run` previews without writing.
-
-### Knowledge base (commands and tools)
-
-> Since v0.9.1 the **admin UI has been removed** (user decision): there is no settings tab any more.
-> Retrieval and maintenance now go through the `memory` tool / `/memory` command only.
-
-| Capability | Entry point |
-| --- | --- |
-| Keyword retrieval (relevance + weight cap) | `memory action=query text="…" [fragmentTypes=…] [minWeight=…]` |
-| List / filter by layer | `/memory list` |
-| Edit in place / remove (backed up, restorable) / pin | `memory action=update\|remove\|pin\|unpin` |
-| Metabolism (decay / consolidate / archive, dry-run) | `memory action=dream [dryRun=true]` |
-| Deep reflection (clusters / conflicts / forget list) | `memory action=reflect [dryRun=true]` |
-| Structured audit | `memory action=audit` |
-
-### Audit
-
-Two channels: the **SQLite `audit_log` table** (structured, 5-tuple `t / actor / action / entry_id / detail`, primary) + **`audit.log`** (human-readable one-line summaries, backward compatible).
-
-Event types: `WRITE` / `DECAY` / `CONSOLIDATE` / `CONFLICT` / `ARCHIVE` / `RECALL` / `ROLLBACK` / `AUTO-DREAM` / `AUTO-REFLECT` (auxiliary: `PIN` / `UNPIN` / `UPDATE` / `REMOVE` / `RESTORE` / `MIGRATE` / `VECTORIZE` / `PREVIEW` / `REFLECT` / `CONFIG`).
-
-```text
-/memory audit                      # recent events
-/memory audit --since 7d           # last 7 days
-/memory audit --type DECAY         # DECAY only
-memory action=audit type="DECAY" sinceDays=7
-memory action=audit aggregate=true groupBy=action   # aggregated stats
-```
-
-### Retrieval
-
-**Single deterministic mode** (since v0.9.0): entries are ranked by relevance,
-`score = relevance · (1 + 0.5 · min(weight, weightCap) / weightCap)`, where
-`relevance = Σ field weights that matched (text 1.0 / summary 0.5 / entities 0.25) + 0.1 · min(occurrences, 5)`.
-Ties break by weight desc → created_at desc → entry_id asc, so ordering is a **total order and deterministic**.
-
-Keyword-less queries (`list` browsing) sort by weight desc and float behavior memories that conflict with a preference to the top.
-
-> v0.9.0: the local embedding model (bge-small-zh-v1.5) and the `semantic`/`hybrid` modes were removed — they required
-> downloading ~90MB of ONNX weights and pulled in `@huggingface/transformers` + onnxruntime. Keyword retrieval is
-> fully offline, dependency-free and reproducible, which is sufficient. `tokenize` and term-frequency cosine remain,
-> serving `dream`'s topic clustering.
+- Fully local: no network requests, no external APIs, no telemetry.
+- Database: `<DSH_BIOMEMORY_DIR || ~/.dsh/biomemory>/biomemory.db` (SQLite, WAL).
+- Deletion is a tombstone (recoverable); `compact` only changes status inside the file. Use `dump` when you want a Markdown copy.
+- Env vars: `DSH_BIOMEMORY_DIR` (data dir), `DSH_MEMORY_ROOT` (Markdown backup/log dir).
 
 ## Configuration
 
-| Key | Default | Description |
-| --- | --- | --- |
-| `halfLifeDays` | `7` | Half-life (days): weight halves every half-life |
-| `decayThreshold` | `3` | Weight below this → archived (moved, never deleted) |
-| `consolidateThreshold` | `3` | References ≥ this → consolidate (+1 weight) |
-| `weightCap` | `20` | Consolidation weight cap (prevents runaway growth) |
-| `hotTokenLimit` | `5000` | Snapshot hot-section token budget |
-| `maxQueryResults` | `20` | Query result cap |
-| `approvalFallback` | `auto` | When approval is unavailable: `auto` = save with degraded-audit marker / `deny` = reject |
-| `autoDreamDays` | `7` | Auto-run metabolism at startup if older than this many days (`0`=off) |
-| `autoReflectDays` | `3` | Auto-run reflection at startup if older than this many days (`0`=off) |
-| `conflictOverlap` | `3` | Conflict detection: proprietary bigram overlap threshold between behavior and a single preference |
+`~/.dsh/biomemory/biomemory.config.json` (or bundle config) can override:
 
-Editable via `POST /biomemory/api/config` (host only, no UI); persisted as `biomemory.config.json` (fully transparent).
+| Key | Default | Meaning |
+|---|---|---|
+| `nearDuplicateThreshold` | 0.7 | Similarity threshold for write dedupe (0 = off) |
+| `nearDuplicateAction` | merge | On near-duplicate: merge, or `skip` (report only) |
+| `approvalFallback` | deny | Deny when approval is unavailable, or `auto` |
+| `decayThreshold` | 3 | "Low weight" warning threshold |
+| `hotTokenLimit` | 5000 | Token cap for the frozen snapshot injection |
+| `maxQueryResults` | 20 | Query result cap |
 
-## Integration
+## Deliberately not done
 
-### Web API (registered on DshWebServer, prefix `/biomemory/api`)
+- **No vector/embedding search**: same input, same result; retrieval must be explainable.
+- **No automated "reflection"**: without a model it does not pretend to generalise; workflows only emerge from repetition.
+- **No delete-means-gone**: every deletion leaves a tombstone and can be rolled back.
+- **No cross-machine sync**: that is a different product; here the file itself is portable.
 
-| Method / Path | Description |
-| --- | --- |
-| `GET /status` | Store statistics + config + model/migration status |
-| `GET /config` · `POST /config` | Read / update configuration (whitelisted fields; `reset:true` restores defaults) |
-| `POST /dream` | Run metabolism (body `{ "dryRun": true }`) |
-| `POST /reflect` | Run deep reflection (body `{ "dryRun": true }`) |
-| `GET /entries` | List entries (`q` query / `layer` layer / `limit` cap) |
-| `POST /entries/pin` · `/unpin` · `/remove` · `/restore` · `/update` | Entry management (body carries `fp` etc.) |
+## Version history
 
-### Environment variables
-
-| Variable | Default | Description |
-| --- | --- | --- |
-| `DSH_BIOMEMORY_DIR` | `~/.dsh/biomemory` | SQLite data directory |
-| `DSH_MEMORY_ROOT` | `~/.dsh/memory` | Legacy Markdown root (migration source & read-only backup) |
-| `DSH_MEMORY_DEBUG` | No | Writes `[dsh-biomemory]`-prefixed debug logs to stderr when set to `1` |
-
-## Compatibility
-
-- **Node ≥ 22.19.0** (requires built-in `node:sqlite`).
-- **Runtime**: `@deepseek-ai/dsh-*` ≥ 0.1.1-rc.2 (current latest line; verified on 0.1.2-rc.1 and 0.1.5-rc.1, implemented against actual lib sources).
-- **peerDependencies**: `@deepseek-ai/cordis ^4.0.2`, `@deepseek-ai/dsh-session >= 0.1.1-rc.2`, `@deepseek-ai/dsh-tools >= 0.1.1-rc.2`.
-- **Prerelease versions are not covered by that semver range**: per semver prerelease rules, node-semver `satisfies` returns **false** for `>=0.1.1-rc.2` against 0.1.5-rc.1. Both packages are always provided by the host runtime, so the range is kept for reference and both are marked `optional: true` in `peerDependenciesMeta` (never blocks loading). **Verified working on 0.1.5-rc.1.**
-- **Zero native npm dependencies**: the data layer is built-in `node:sqlite` plus pure JS, so it cannot clash with other plugins' native modules; the embedding model is an optional offline component that degrades gracefully when missing.
-- Since v0.6.3, memory tool return values are compatible with dsh-tools' new strict lossless JSON validation (undefined/NaN fields are normalized to null, fixing tool validation errors).
-
-## Version History
-
-| Version | Date | Highlights |
-| --- | --- | --- |
-| **v0.9.2** | 2026-09-29 | **Dead module `extract` removed (de-bloating)**: since v0.9.1 dropped the `POST /api/extract` endpoint, `extract.mjs` had **no production caller left** (only its own unit test), yet was still shipped in the npm tarball — the whole module is now gone, together with `tests/extract.test.mjs`, its `files` entry, four never-read `CFG.extract*` config keys and the extract special-case in `POST /config`. `package-lock.json` was pruned of jsdom/react/react-dom and their 68 transitive dev-only packages (72 -> 4). Tests 88 -> 81. |
-| **v0.9.1** | 2026-09-29 | **Admin UI removed (user decision)**: deleted `lib/client.js` and the "Memory Workbench" settings page (including its page test and the no-harness-client-imports guard); the plugin is now a **pure host plugin** used only through the `memory` tool and `/memory` command. The `dsh.client` declaration, the `./client` export, `lib` in `files`, and the jsdom/react devDependencies are gone. Dead UI copy keys and the `/extract`, `/archived`, `/entries/{unarchive,supersede,reactivate}`, `/superseded`, `/audit/aggregate` endpoints were removed too (HTTP endpoints 19 -> 12). 88/88 tests pass. |
-| **v0.9.0** | 2026-09-29 | **Embedding model and semantic retrieval removed (user decision)**: query collapses to a single deterministic relevance ranking; `embed.mjs`, the `@huggingface/transformers` dependency and the `preloadEmbeddings` config are gone (node_modules 410.5MB → 20.1MB, no ~90MB local ONNX model); the `db` vector API and `/vectors` endpoint were removed (`entries.vector` is kept for database compatibility); the settings page drops the mode selector and model card; `tokenize` and term-frequency cosine stay (used by `dream` clustering). **DSH 0.2.0-rc.2 adaptation**: the client half no longer requires any Harness Client package (official practices.md §UI rule 1) — Button/Input/9 icons are vendored inline; `dsh.client.inject` drops the non-existent `@deepseek-ai/dsh-client-runtime`; new `tests/no-harness-client-imports.test.mjs` guards. 95/95 tests pass |
-| **v0.8.2** | 2026-09-20 | **Config keys are now stored by type (found on a live install)**: the settings page's POST /config coerced every key through `Number()` except petEndpoint/approvalFallback, so the **string** keys extractProvider/extractModel were stored as 0 (`String(0) = "0"` was then used as a provider name → NO_ADAPTER, and the page rendered them blank because `0 || ""` is empty) and the **boolean** preloadEmbeddings became 0/1. Writing now distinguishes string / enum / boolean / numeric keys: strings are trimmed, enums fall back to an allow-list, booleans accept true/1/'1'/'true', numbers must be non-negative. Verified on the **running plugin** (POST → GET → on-disk config agree): extractProvider=deepseek-official, extractModel=deepseek-flash, preloadEmbeddings=true; the zero-token preview returned a 1616-character transcript of the current session |
-| **v0.8.1** | 2026-09-20 | **Conflict-ruling loop + on-demand extraction + honest UI**: ①`superseded` stops being a never-written dead value and becomes **superseded by a human ruling** — same effect as `archived` (leaves injection and retrieval) but a different reason; `allEntries`/`entriesWithVectors` now only take `active`; new `setEntryStatus` unifies archive/supersede/reactivate with `SUPERSEDE`/`ARCHIVE-MANUAL`/`REACTIVATE` audits; new `GET /superseded` plus Supersede/Restore buttons in the UI (conflicts previously had a red badge and no way out). ②**On-demand extraction button**: `POST /api/extract` reads `ctx.sessions.get(id).deriveMessages()` and calls the model through `ctx.llm.stream` (reusing the DSH provider); candidates go through the same fingerprint dedup and near-duplicate merge, and Preview costs zero tokens. ③**Honest UI**: the model card has three states (not-loaded / 512-dim / degraded) and the audit card footnote no longer shows unrelated data. ④Compliance: client bundle moved to `lib/client.js`, bundle entry id unified to the package name. 98 tests green |
-| **v0.8.0** | 2026-09-20 | **Auto-metabolism fix (real defect, caused data loss)**: ①the auto-`dream` interval check used `store.latestBackup()`, which reads the pre-single-track Markdown backup dir (`MEMORY_ROOT/backups/<12-digit dirs>`) that stopped being produced in v0.6.4 → always `null` → **a full dream ran on every plugin load** (109 runs measured, up to 26 in one day); ②`runDream` decayed with `w × 0.5^(age/halfLife)` using the *already decayed* current weight times the full-age factor = **compounding decay**, so repeated runs accelerated exponentially → 19 behavioural memories (including several merged composite entries) were pushed below `decayThreshold` and wrongly archived. Fix: the check now reads `lastDreamAt` / `lastReflectAt` from the meta table (written when dream/reflect finish; no file mtime involved); decay became **incremental and idempotent** — base = `max(created_at, last metabolism)`, and `DECAY` is recorded only when the stored precision (1 decimal) actually drops. New `store.unarchiveEntry(fp, {weight})` (archived row → `active` with weight repair, audited `UNARCHIVE`) plus the `bm-restore-archived.cjs` maintenance script (dry-run by default); all 19 wrongly archived entries were restored. **Same batch**: `setPinFp` zeroed `weight` when pinning (un-pinning instantly dropped below threshold) → weight is no longer touched (skip-decay is enforced by `runDream`); `removeByFp` also ran `DELETE FROM audit_log` (deleting an entry erased its audit trail) → removed; `/status` `auditCount` used `queryAudit({})` with the default `limit=50` → always ≤50, now `limit: 100000`; `retrieve` counted hits for **every** returned entry (contradicting the "only real keyword recalls consolidate" comment) → only keyword hits count; the embedding model had no negative cache and `apply` forced `ensureVectors` 100ms after start (loading the ~24MB onnx model on every launch) → negative cache + truly lazy loading (`preloadEmbeddings` defaults to `false`; set `true` or `DSH_BIOMEMORY_PRELOAD=1` to warm up); `PRAGMA busy_timeout=5000` for multi-process access; the Markdown migration no longer mis-parses the sync mirror `条目镜像.md` and `reflections/`. **Dead code removed**: `rewriteFile` / `findByText` / `backupNow` / `latestBackup` (the very trigger of this defect) / `embedMany` / `isModelReady` / `embedTextOf` / `db.getById` / `db.listPinned` / `session-state.getSummarySid`. New regression tests in `tests/dream-idempotent.test.mjs` (idempotent decay / new-entry baseline / unarchive / snapshot skips archived / trigger predicate / consolidation tied to recall time / restore keeps entry_id). **Follow-up cleanup**: the auto-metabolism predicate is extracted into the pure function `meta.shouldRunAuto()` (directly unit-testable); consolidation now only reinforces entries that were **recently recalled for real** (`last_accessed` must fall within half a half-life, and `consolidateHits` now records the recall time — the old code was decoupled from recall time, so stale entries gained weight on every dream; 3020 CONSOLIDATE events measured); `restoreEntry` keeps the original `entry_id` (the old code regenerated a UUID, leaving 6893/10006 audit rows dangling); the Web API `readBody` is capped at 1 MiB (`DSH_BIOMEMORY_BODY_LIMIT` overrides); `client.js` theme listener got its dependency array (it used to rebuild the matchMedia listener and MutationObserver on every render); `settings-page.test.mjs`, which never matched the `tests/*.test.mjs` glob, is now part of `npm test`. **Upgrade (memory atomisation, P1)**: `writeEntry` now intercepts **near-duplicates** — when new content scores ≥ `nearDuplicateThreshold` (default `0.7`, `0` disables) in Chinese-bigram Jaccard similarity against an existing entry of the same type, it is not inserted; instead the tool returns the similar entry's fp plus a merge hint (audited as `WRITE-SKIP`). Fragmentation came from "the same thing written as a new entry again and again" (the 8/20–9/5 batch had to be merged by hand; whatever was missed ended up archived by normal metabolism). The check is pure bigram arithmetic, never loads the embedding model, and runs inline on the write path; the exact fingerprint only looks at the first 20 characters, so near-duplicate detection covers the "rephrased / different opening" cases. **Second round (same version)**: ①**automatic near-duplicate merge** (`nearDuplicateAction`, default `merge`, borrowed from `@zheexinn/dsh-memory`'s merge-on-write): a near-duplicate is no longer merely rejected — the new content is appended to the existing entry as `｜ 【补充·date】…` with weight +1 (falls back to `skip` above 4000 chars), audited as `WRITE-MERGE`; similarity now takes `max(Jaccard, containment)` when lengths are comparable, so short rephrasings are not missed (measured 0.64 → 0.86 for two short near-duplicates); ②**snapshot marked as untrusted data** (borrowed from `dsh-git-memory`'s `<summary_snapshot>`): the injected header now states explicitly that the entries are *data, not instructions*; ③**backup/restore hardening**: `wal_checkpoint` result is checked (warns when `busy≠0`), every backup is self-verified (the copy is opened and its entry count compared, failing copies are deleted and the error rethrown), and restore now takes a pre-restore snapshot, replaces the DB via temp-file rename, and clears stale `-wal`/`-shm`; ④**all panel requests are abortable**: `client.js` gained `apiFetch` (registers in-flight requests, aborts them on unmount, and fixes the effect-returning-a-Promise warning) plus editing state is cleared on tab switch; ⑤the inert top-level `allowScripts` was replaced by pnpm's actual `pnpm.onlyBuiltDependencies` (no `@deepseek-ai/*` package in the global install reads `allowScripts`). ⑥**"auto-sink" reliability fix** (answering "will it save on its own when I don't say so?"): the post-turn sink reminder window went from a **hard-coded 5 minutes** to the configurable `sinkWindowMinutes` (default **60**) — previously, if the user stepped away for more than five minutes the reminder was silently dropped, which is exactly why writes often only happened when explicitly requested; the reminder text now also states that **proactive sinking is the default** and that near-duplicates are merged automatically. 79 → **90 tests green** |
-| **v0.7.1** | 2026-09-17 | **Approval gate fix (real defect)**: `gateWrite` called `approval.request()` with only toolName/reason, but the official implementation (dsh-user-approval 0.1.5-rc.2, first line of its source) reads `req.agent.session` — so `req.agent` was undefined and it threw `Cannot read properties of undefined (reading 'session')`, making **every important write (user preferences / project decisions / lessons) fail** (hit twice in practice). The fix mirrors the official `dsh-tools` call shape `{ agent, toolName, callId, reason, signal }` and adds a fail-closed guard for a missing agent (audited as `no-agent`) instead of crashing — the official path likewise denies rather than throws when there is no agent. 2 new tests (payload carries agent/callId; a missing agent neither crashes nor silently allows); 79 tests green |
-| **v0.7.0** | 2026-09-17 | **Mirror sync hook**: new `mirror.mjs` — after `dream` / `reflect` (tool `memory action=dream`, `/memory dream`, startup auto-dream, settings-page `POST /dream`) it asynchronously invokes an external maintenance script (resolved by default as `<plugin dir>/../../tools/bm-sync-mirror.cjs`, overridable with `DSH_BIOMEMORY_MIRROR_SCRIPT`) to re-export SQLite into the human-readable mirror (`<MEMORY_ROOT>/preferences.md` + `longterm\条目镜像.md`). **Why an external script**: the whole point of the v0.6.4 single-track design is "SQLite is the only source of truth, the plugin never writes Markdown" — restoring Markdown writes inside the write path would bring back the dual-track that caused 79 memories never to be injected (8/20–9/5). So the plugin only triggers; generation and backup stay in the external script. Behaviour: `--dry-run` does not sync, `DSH_BIOMEMORY_MIRROR_SYNC=0` disables it, `DSH_BIOMEMORY_MIRROR_SCRIPT` overrides the script; a missing script / failure / timeout (15s) never affects memory itself and only leaves one debug-log line; the script path is resolved **lazily** (freezing it at module top level would break "import first, set env later" overrides — same lesson as `db.mjs::biomemoryDir()`). The mirror script now also writes **atomically** (temp file + rename) so an interrupted run cannot leave a half-written mirror. ★Two traps hit while implementing: ①the script path must be resolved **lazily** (freezing it at module top level breaks "import first, set env later" overrides — same lesson as `db.mjs::biomemoryDir()`); ②**never call `unref()` on the child** — measured: detached + unref makes the parent miss the exit/close event, so the promise never settles and the caller's await hangs (fixed by using the `close` event and dropping unref). New tests cover triggering, env passthrough, the disable switch and a missing script; 77 tests green (stable across three runs) |
-| **v0.6.8** | 2026-09-17 | **Audit dual-write fixed**: `store.mjs` (8 call sites) and `retrieve.mjs` (1) called `db.audit` directly, which only writes the SQLite `audit_log` table — the human-readable mirror `<MEMORY_ROOT>/audit.log` is appended inside `shared.mjs::audit`. As a result, since v0.5 every memory written / edited / removed / pinned through the memory tool was **missing from the mirror** (verified: the mirror's last `WRITE` line dated 2026-08-19, leaving only metabolic events such as `DECAY` / `CONSOLIDATE`), contradicting the documented "SQLite audit_log table + human-readable mirror". All call sites now go through `shared.audit`, with `fp` / text summary lifted into the top-level payload (matching the existing `meta.mjs` convention) so mirror lines read `[time] ACTION fp summary` again; a regression test locks the behaviour in; 76 tests green |
-| **v0.6.7** | 2026-09-17 | **Backup file uniqueness hardened**: `backupDb()` timestamps only carry millisecond precision, so two backups taken within the same millisecond collided on one filename and **silently overwrote** the earlier one (the intermittent failure of the "each backup is its own file" test). Collisions now get a `-2` / `-3` numeric suffix, so every backup is always an independent file; the test now takes backups in a tight loop (3 within the same millisecond must not collide and all must exist); 75 tests green |
-| **v0.6.6** | 2026-09-17 | **exact ranking semantics fixed**: keyword search no longer sorts by weight alone but by relevance with a bounded weight bonus — `score = relevance × (1 + 0.5·min(weight, weightCap)/weightCap)` where `relevance = Σ field-hit weights (text 1.0 / summary 0.5 / entities 0.25) + 0.1·min(occurrences, 5) ∈ [0, 2.25]`; weight can lift a hit by at most +50% (same shape and same weightCap normalization as the hybrid γ term), so a low-weight but highly relevant memory is no longer buried under a high-weight marginal match, while pinned/important memories still win ties and near-ties; ties resolve by weight desc → created_at desc → entry_id asc (total order, deterministic: same input, same output); empty-query browsing (list) keeps weight-descending order and conflict-on-top behavior; the `queryEntries` result shape, hit consolidation (hits+1), `search`/`queryEntries` parameters and the hybrid RRF fusion (which consumes only exact ranks) are unchanged; 6 new tests (75 green) |
-| **v0.6.5** | 2026-09-16 | Defect fixes and hardening: approval gate is fail-closed by default (missing service / thrown request / non-grant outcome denies the write and audits it — the old `auto` default silently skipped approval; all runtime grant words accepted); hybrid fusion now uses γ·(weight/weightCap) so weight sits in the same magnitude as the RRF terms (the raw γ·weight buried semantic ranking); snapshot budget fixed (preferences/pinned truncated line-by-line plus a kb/bb floor, so injection never exceeds hotTokenLimit); reflection conflict detection switched to kind === '行为' (newly written behavior memories previously never surfaced as conflicts); /memory audit and GET /entries aligned with real fields (no more undefined output; entries expose hits/pinned/mode/ts/kind and apply the layer filter in the q branch); UI theme following now uses MutationObserver, subtitle reads live counts, and failed operations are no longer silent; peerDependenciesMeta added for prerelease range compatibility |
-| **v0.6.4** | 2026-09-06 | Single-source-of-truth finalized: SQLite (`~/.dsh/biomemory/biomemory.db`) is the only data layer — writes no longer append local Markdown; conflict detection reads preferences from SQLite; snapshot / retrieve / meta / index all synchronized; 60 tests green. Local Markdown docs demoted to read-only backup + manual review, no longer involved in runtime read/write |
-| **v0.6.3** | 2026-09-05 | Adapted to DSH 0.1.2-rc.1: memory tool return values compatible with the new dsh-tools lossless JSON validation (undefined/NaN fields normalized to null, fixing tool errors); plugin UI dark-mode adaptation (DSH-theme following, dual-channel detection + MutationObserver) |
-| **v0.6.2** | 2026-09-05 | Admin UI rebuilt on the "skeleton/flesh/breath" design language: modern minimalism — neutralSurface base with white rounded cards, primary-underline tabs, 4/8px grid, 150ms restrained motion; colors taken entirely from dsh-fuse design tokens, zero hardcoded values; purple-pink brand color established (memory neurons) |
-| **v0.6.1** | 2026-09-05 | Memory / Retrieved / Applied three-layer separation (retrieved ≠ adopted); pin semantics corrected (pin = no-forgetting + relevance admission); memory classes `memory_class` + `source_ref`; schema evolution (new columns in `entries`, idempotent automatic ALTER) |
-| **v0.6.0** | 2026-08-31 | `index.mjs` split into shared / store / retrieve / meta / snapshot / gate / notify / session-state modules (no behavior change; 57 tests green); session-end auto-consolidation (a "consolidate this turn" directive injected after `turn/end`, marker cleared on write, 5-minute stale guard, strict deduplication) |
-| **v0.5.3** | 2026-08-31 | Settings page moved to dsh-fuse design tokens; peerDeps bumped to `>=0.1.1-rc.1` |
-| **v0.5.2** | 2026-08-20 | Editable memories (`update` preserves pin/weight, audits `UPDATE`, rejects duplicates) + conflict surfacing (behavior-vs-preference conflicts surfaced at the top for judgment instead of silent weight reduction); single-entry rollback (`restore` / `/memory undo`) |
-| **v0.5.0** | 2026-08-20 | SQLite data layer (`~/.dsh/biomemory/biomemory.db`, built-in node:sqlite, WAL, zero external deps) + local embedding semantic retrieval (bge-small-zh-v1.5, 512-dim, offline); automatic migration of legacy Markdown memories (kept as read-only backup) + audit aggregation + checkpoint-resumable dream |
-| **v0.4.0** | — | Automatic recall (hit consolidation, use-it-or-lose-it) / automatic saving (approval fallback + auto metabolism/reflection cycles) + deep reflection + knowledge page (settings tab) |
-| **v0.3.x** | — | Memory metabolism (dream) + memory pins + structured audit (audit.jsonl) + semantic retrieval (TF-IDF) + settings panel |
-
-## FAQ
-
-- **Node version**: Node ≥ 22.19.0 is required (built-in `node:sqlite`); older versions may fail to load the plugin.
-- **DSH runtime compatibility**: targets `@deepseek-ai/dsh-*` ≥ 0.1.1-rc.2 — verify the runtime version you actually run (0.1.2-rc.1 and 0.1.5-rc.1 verified). Note the semver prerelease rule: `>=0.1.1-rc.2` does not `satisfies` 0.1.5-rc.1, but both packages come from the host, so loading is unaffected (see Compatibility).
-- **Tool errors (Invalid object / lossless JSON)**: upgrade to v0.6.3+ — return values are now compatible with the new strict validation.
-- **Important memories are refused / not saved**: since v0.6.5 the approval gate is fail-closed — a missing approval service, a throwing `approval.request`, or any non-grant outcome (rejected/cancelled/unavailable) denies the write and logs an `APPROVAL-UNAVAILABLE` audit entry. To keep the old auto-save behavior, set `approvalFallback: "auto"` explicitly in the settings page or `biomemory.config.json`.
-- **undefined in audit / entry lists**: fixed in v0.6.5 (`/memory audit` now maps `action/entry_id/detail`; `GET /entries` exposes `hits/pinned/mode/ts/kind` and applies the layer filter when `q` is present).
-- **Write failures**: check read/write permissions for `~/.dsh/biomemory/` (and `DSH_BIOMEMORY_DIR`); if approval is rejected, check the approval policy and `approvalFallback`.
-- **Where did my legacy Markdown memories go?**: they were migrated into SQLite automatically on first start; `~/.dsh/memory/` remains as a read-only backup and is not deleted.
-- **Can a deleted entry be recovered?**: the database is backed up before each removal (last 7 kept) — run `/memory undo <fp>` or `memory action=restore fp=...`.
-- **Native module conflicts**: this plugin has none — it is implemented in pure JS and cannot conflict with other plugins.
-
-## Development
-
-```bash
-# Run the test suite (node:test, 81 tests, all green)
-npm test
-
-# Release consistency check (version / README version exposure / files whitelist / lock / git state)
-node scripts/release-check.mjs
-```
-
-**CI**: `.github/workflows/ci.yml` runs "install deps → release check → unit tests → `npm pack --dry-run`" on Node 24 for every push and pull request.
-
-Module layout: `index.mjs` (wiring layer) + `shared` (config/audit/conflict/snapshot budget) + `store` (write/pin/remove/restore/migration) + `retrieve` (deterministic retrieval) + `meta` (metabolism/reflection clustering) + `snapshot` (snapshot/session injection) + `gate` (approval gate/self-heal) + `mirror` (mirror sync) + `session-state` + `extract` (on-demand extraction, currently no entry point) + `db` (SQLite data layer).
-
-**Contributing**: fork → change → add/update tests → run `npm test` before submitting. Please include the DSH runtime version, Node version, and reproduction steps when reporting issues.
+| Version | Date | Changes |
+|---|---|---|
+| **v0.10.0** | 2026-10-05 | **Rebuilt as a memory layer**: trigger-driven recall (`trigger`/`realm`/`mtype`/`mkey` columns), type-priority ordering, five cleanup rules with tombstones and `compact.log`, workflow promotion and chains, injection budget (<=8 items / <=1200 chars), `compact`/`dump`; **removed** dream/reflect/conflict-adjudication/audit and the automatic Markdown mirror |
+| v0.9.2 | 2026-09-29 | Removed dead modules and config keys; docs aligned with implementation |
+| v0.9.1 | 2026-09-29 | Removed the management UI; plugin became host-only |
+| v0.9.0 | 2026-09-29 | Removed embeddings and semantic/hybrid retrieval |
+| v0.8.2 | 2026-09-20 | Compliance batch: audit fixes, typed config persistence, near-duplicate dedupe |
+| v0.8.0 | 2026-09-16 | Write dedupe (bigram similarity) with merge/skip strategies |
+| v0.7.0 | 2026-09-17 | Mirror-sync hook (removed in v0.10.0) |
+| v0.6.4 | 2026-09-06 | Single source of truth: SQLite; Markdown became read-only backup |
+| v0.6.0 | 2026-08-19 | Architecture split (shared/store/retrieve/snapshot/gate) + session sediment |
+| v0.5.0 | 2026-08-15 | Data layer moved to SQLite (`node:sqlite`) |
 
 ## License
 
-MIT — see [LICENSE](LICENSE) for the full text.
+MIT — see [LICENSE](LICENSE).
