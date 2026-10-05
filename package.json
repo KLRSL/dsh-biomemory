@@ -60,8 +60,9 @@
     "deepseek-harness",
     "memory",
     "plugin",
-    "biomimetic",
-    "sqlite"
+    "memory-layer",
+    "sqlite",
+    "local-first"
   ],
   "homepage": "https://github.com/KLRSL/dsh-biomemory#readme",
   "bugs": {
