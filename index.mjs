@@ -100,7 +100,7 @@ function makeMemoryTool(ctx) {
       '用法: memory action=add text="..." [track=user|agent] [source="来源说明"] —— 保存（重要项自动请求审批，审批不可用时按配置自动保存）',
       '      ⚠️ 写入去重（v0.8.0）：若与已有同类条目高度相似（默认 bigram 相似度 ≥0.7），不会新增，而是返回相似条目的 fp 与提示——此时应改用 update 合并，不要换措辞硬写第二条',
       '      memory action=query text="关键词" [projectId=项目] [topK=10] [minWeight=0.1] [fragmentTypes=decision,preference] [includeArchived=false] —— 查询',
-      '      memory action=update fp="指纹" text="新内容" —— 编辑一条（保留锁定/权重，自动审计可追溯）',
+      '      memory action=update fp="指纹" text="新内容" —— 编辑一条（保留锁定/权重）',
       '      memory action=remove fp="指纹" —— 删除一条（自动备份，可回滚）',
       '      memory action=restore fp="指纹" —— 从最近备份回滚被删除的一条',
       '      memory action=list —— 列出全部条目',
@@ -162,7 +162,7 @@ function makeMemoryTool(ctx) {
       return { card: 'generic', title: `记忆：${args?.action || ''}`, kind: 'other', rawInput: args }
     },
     async execute(args, exec) {
-      const { action, text = '', track = 'agent', fp, type, sinceDays, projectId, topK, minWeight, fragmentTypes, includeArchived, aggregate, groupBy, source } = args || {}
+      const { action, text = '', track = 'agent', fp, type, sinceDays, projectId, topK, minWeight, fragmentTypes, includeArchived, dryRun, source } = args || {}
       const sessionId = exec.agent?.id
       if (action === 'add') {
         if (!text.trim()) return { ok: false, error: 'text 必填' }
@@ -432,7 +432,7 @@ export function apply(ctx, config = {}) {
           if (req.method === 'POST' && p === '/config') {
             let body = {}
             try { body = JSON.parse(await readBody(req)) } catch { /* ignore */ }
-            const allowed = ['halfLifeDays', 'decayThreshold', 'consolidateThreshold', 'weightCap', 'hotTokenLimit', 'maxQueryResults', 'approvalFallback', 'nearDuplicateThreshold', 'nearDuplicateAction', 'sinkWindowMinutes']
+            const allowed = ['decayThreshold', 'weightCap', 'hotTokenLimit', 'maxQueryResults', 'approvalFallback', 'nearDuplicateThreshold', 'nearDuplicateAction', 'sinkWindowMinutes']
             if (body.reset === true) {
               try { fs.unlinkSync(PATHS.config) } catch { /* ignore */ }
               setConfig({ ...DEFAULTS })

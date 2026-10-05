@@ -24,10 +24,8 @@ export const REQUEST_MARKER = '[dsh-biomemory]'
 // ---------- 配置（默认值，可在 apply(config) 覆盖） ----------
 
 export const DEFAULTS = {
-  halfLifeDays: 7,        // 半衰期：权重每过半衰期衰减一半
-  decayThreshold: 3,      // 权重低于此值 → 归档
-  consolidateThreshold: 3, // 单条引用 ≥ 此次数 → 巩固加权
-  weightCap: 20,          // 巩固权重上限（防膨胀）
+  decayThreshold: 3,      // 权重低于此值 → 状态页标「待处理」（v0.10.0 起不再自动归档，归档只由 compact 五条规则决定）
+  weightCap: 20,          // 权重上限（防膨胀）
   hotTokenLimit: 5000,    // 快照注入热区 token 上限
   maxQueryResults: 20,    // 查询返回上限
   approvalFallback: 'deny', // v0.6.5 起默认 deny（fail-closed）：审批服务缺失/请求异常/非授予结果 → 拒绝写入并记审计；auto=自动保存并审计（旧行为，需显式设置）
@@ -180,6 +178,9 @@ export function estimateTokens(s) {
   }
   return zh + Math.ceil(other / 4)
 }
+
+// 调试开关：DSH_MEMORY_DEBUG=1 时输出诊断日志（2026-10-05：本行曾被误删，导致 apply() 抛 ReferenceError、插件整体不加载）
+const DBG = process.env.DSH_MEMORY_DEBUG === '1'
 
 export function dbgLog(msg) {
   if (!DBG) return

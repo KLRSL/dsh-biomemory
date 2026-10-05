@@ -292,7 +292,7 @@ export function touchEntry(fp, { weightDelta = 0, hitsDelta = 0, accessed = fals
 }
 
 /** 设置/解除记忆钉。v0.8.0：不再把 weight 清零（旧实现 pinned 时写 weight=1 →
- *  一解锁就低于 decayThreshold 被归档；钉住本身已由 runDream 跳过 pinned 保护）。 */
+ *  一解锁就低于 decayThreshold 被标为「待处理」；钉住本身不参与自动清理）。 */
 export function setPinFp(fp, pinned, reason) {
   const db = openDb()
   const e = getByFp(fp)

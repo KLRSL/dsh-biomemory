@@ -259,14 +259,14 @@ test('tokenize：中文单字+双字、英文单词', () => {
 
 test('setConfig/getConfig：配置可覆盖并回读', () => {
   const before = I.getConfig()
-  assert.equal(before.halfLifeDays, 7)
-  I.setConfig({ halfLifeDays: 1, decayThreshold: 5 })
+  assert.equal(before.weightCap, 20)
+  I.setConfig({ weightCap: 30, decayThreshold: 5 })
   const after = I.getConfig()
-  assert.equal(after.halfLifeDays, 1)
+  assert.equal(after.weightCap, 30)
   assert.equal(after.decayThreshold, 5)
-  assert.equal(after.weightCap, 20, '未覆盖的配置保留默认值')
+  assert.equal(after.maxQueryResults, 20, '未覆盖的配置保留默认值')
   I.setConfig({}) // 还原默认
-  assert.equal(I.getConfig().halfLifeDays, 7)
+  assert.equal(I.getConfig().weightCap, 20)
 })
 
 // ============================================================================
